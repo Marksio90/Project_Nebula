@@ -1,0 +1,62 @@
+# Secrets & credentials — NEVER commit
+.env
+secrets/
+*.pem
+*.key
+*client_secrets*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+
+# Generated media artefacts (handled by Docker volumes)
+storage/stems/*
+storage/mixes/*
+storage/visuals/*
+storage/exports/*
+!storage/.gitkeep
+!storage/stems/.gitkeep
+!storage/mixes/.gitkeep
+!storage/visuals/.gitkeep
+!storage/exports/.gitkeep
+
+# Celery / Flower state
+data/flower/
+
+# DB
+*.db
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/

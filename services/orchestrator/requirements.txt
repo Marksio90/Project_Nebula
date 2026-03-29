@@ -1,0 +1,14 @@
+celery==5.4.0
+redis[hiredis]==5.2.1
+crewai==0.95.0
+crewai-tools==0.20.0
+openai==1.59.5
+google-generativeai==0.8.3
+sqlalchemy[asyncio]==2.0.37
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+pydantic==2.10.4
+pydantic-settings==2.7.1
+tenacity==9.0.0
+httpx==0.28.1
+python-dateutil==2.9.0
