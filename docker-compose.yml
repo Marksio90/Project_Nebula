@@ -1,0 +1,300 @@
+##############################################################################
+# PROJECT NEBULA — docker-compose.yml
+# Autonomous AI Music Label & Multi-Platform Content Distributor
+#
+# Services:
+#   postgres        — State & mix-history database
+#   redis           — Celery broker + result backend
+#   api_gateway     — FastAPI HTTP entry-point
+#   orchestrator    — CrewAI / GPT-4o multi-agent orchestration
+#   dsp_worker      — Audio DSP: librosa + pedalboard (CPU-bound queue)
+#   video_worker    — FFmpeg video rendering (GPU-accelerated queue)
+#   flower          — Celery monitoring UI
+#
+# Celery queues (strict isolation):
+#   orchestration   → orchestrator service
+#   dsp             → dsp_worker service
+#   video           → video_worker service
+#   upload          → orchestrator service (light I/O)
+##############################################################################
+
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# Named volumes — persistent state & shared media artefacts
+# ---------------------------------------------------------------------------
+volumes:
+  postgres_data:
+  redis_data:
+  nebula_stems:        # Raw 30-second audio stems from Gemini Lyria 3
+  nebula_mixes:        # Assembled + mastered full mixes
+  nebula_visuals:      # Raw images / video loops from Gemini
+  nebula_exports:      # Final platform-ready exports
+
+# ---------------------------------------------------------------------------
+# Networks — micro-segmentation
+# ---------------------------------------------------------------------------
+networks:
+  nebula_internal:     # All services talk here
+    driver: bridge
+  nebula_public:       # Only api_gateway is exposed
+    driver: bridge
+
+# ---------------------------------------------------------------------------
+# Reusable anchors
+# ---------------------------------------------------------------------------
+x-common-env: &common-env
+  POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  REDIS_URL: redis://redis:6379/0
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
+  GEMINI_API_KEY: ${GEMINI_API_KEY}
+  YOUTUBE_CLIENT_SECRETS_FILE: /secrets/youtube_client_secrets.json
+  TIKTOK_API_KEY: ${TIKTOK_API_KEY}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  # Storage paths (same inside every container thanks to shared volumes)
+  STEMS_DIR: /mnt/stems
+  MIXES_DIR: /mnt/mixes
+  VISUALS_DIR: /mnt/visuals
+  EXPORTS_DIR: /mnt/exports
+
+x-storage-volumes: &storage-volumes
+  - nebula_stems:/mnt/stems
+  - nebula_mixes:/mnt/mixes
+  - nebula_visuals:/mnt/visuals
+  - nebula_exports:/mnt/exports
+
+x-worker-base: &worker-base
+  restart: unless-stopped
+  networks:
+    - nebula_internal
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  environment:
+    <<: *common-env
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+services:
+
+  # --------------------------------------------------------------------------
+  # POSTGRES — persistent state, mix history, BPM/subgenre dedup registry
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: nebula_postgres
+    restart: unless-stopped
+    networks:
+      - nebula_internal
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nebula}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-nebula_db}
+    ports:
+      - "127.0.0.1:5432:5432"   # Localhost-only — never expose publicly
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nebula} -d ${POSTGRES_DB:-nebula_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # --------------------------------------------------------------------------
+  # REDIS — Celery broker + result backend + rate-limit counters
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: nebula_redis
+    restart: unless-stopped
+    networks:
+      - nebula_internal
+    volumes:
+      - redis_data:/data
+      - ./config/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # API GATEWAY — FastAPI HTTP entry-point, triggers Celery pipelines
+  # --------------------------------------------------------------------------
+  api_gateway:
+    build:
+      context: ./services/api_gateway
+      dockerfile: Dockerfile
+    container_name: nebula_api_gateway
+    restart: unless-stopped
+    networks:
+      - nebula_internal
+      - nebula_public
+    ports:
+      - "8000:8000"
+    volumes:
+      - *storage-volumes
+      - ./secrets:/secrets:ro
+    environment:
+      <<: *common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # ORCHESTRATOR — CrewAI multi-agent crew + lightweight Celery worker
+  #   Queues: orchestration, upload
+  #   CPU: moderate (GPT-4o API calls, coordination logic)
+  # --------------------------------------------------------------------------
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+      dockerfile: Dockerfile
+    container_name: nebula_orchestrator
+    restart: unless-stopped
+    networks:
+      - nebula_internal
+    volumes:
+      - *storage-volumes
+      - ./secrets:/secrets:ro
+    environment:
+      <<: *common-env
+      CELERY_QUEUES: orchestration,upload
+      CELERY_CONCURRENCY: ${ORCHESTRATOR_CONCURRENCY:-4}
+      CREWAI_VERBOSE: ${CREWAI_VERBOSE:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A shared.tasks.celery_app worker
+        --loglevel=${LOG_LEVEL:-info}
+        --queues=orchestration,upload
+        --concurrency=${ORCHESTRATOR_CONCURRENCY:-4}
+        --hostname=orchestrator@%h
+        --without-gossip
+        --without-mingle
+
+  # --------------------------------------------------------------------------
+  # DSP WORKER — librosa beat-matching + pedalboard mastering
+  #   Queue:  dsp
+  #   CPU:    HIGH — runs in isolation, dedicated concurrency=2 (CPU-bound)
+  # --------------------------------------------------------------------------
+  dsp_worker:
+    build:
+      context: ./services/dsp_worker
+      dockerfile: Dockerfile
+    container_name: nebula_dsp_worker
+    restart: unless-stopped
+    networks:
+      - nebula_internal
+    volumes:
+      - *storage-volumes
+    environment:
+      <<: *common-env
+      CELERY_QUEUES: dsp
+      CELERY_CONCURRENCY: ${DSP_CONCURRENCY:-2}
+      # librosa / numpy thread control (avoid CPU over-subscription)
+      OMP_NUM_THREADS: "4"
+      OPENBLAS_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A shared.tasks.celery_app worker
+        --loglevel=${LOG_LEVEL:-info}
+        --queues=dsp
+        --concurrency=${DSP_CONCURRENCY:-2}
+        --hostname=dsp_worker@%h
+        --without-gossip
+        --without-mingle
+    # Reserve CPU resources — DSP is compute-heavy
+    deploy:
+      resources:
+        limits:
+          cpus: "${DSP_CPU_LIMIT:-4.0}"
+          memory: "${DSP_MEM_LIMIT:-8G}"
+
+  # --------------------------------------------------------------------------
+  # VIDEO WORKER — FFmpeg hardware-accelerated rendering + viral slicer
+  #   Queue:  video
+  #   GPU:    Optional NVIDIA NVENC (falls back gracefully to libx264)
+  # --------------------------------------------------------------------------
+  video_worker:
+    build:
+      context: ./services/video_worker
+      dockerfile: Dockerfile
+    container_name: nebula_video_worker
+    restart: unless-stopped
+    networks:
+      - nebula_internal
+    volumes:
+      - *storage-volumes
+    environment:
+      <<: *common-env
+      CELERY_QUEUES: video
+      CELERY_CONCURRENCY: ${VIDEO_CONCURRENCY:-2}
+      FFMPEG_HWACCEL: ${FFMPEG_HWACCEL:-auto}   # auto | nvenc | vaapi | none
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A shared.tasks.celery_app worker
+        --loglevel=${LOG_LEVEL:-info}
+        --queues=video
+        --concurrency=${VIDEO_CONCURRENCY:-2}
+        --hostname=video_worker@%h
+        --without-gossip
+        --without-mingle
+    # Uncomment if NVIDIA GPU is available on the host:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # --------------------------------------------------------------------------
+  # FLOWER — Celery task monitoring dashboard
+  # --------------------------------------------------------------------------
+  flower:
+    image: mher/flower:2.0
+    container_name: nebula_flower
+    restart: unless-stopped
+    networks:
+      - nebula_internal
+      - nebula_public
+    ports:
+      - "127.0.0.1:5555:5555"
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      FLOWER_BASIC_AUTH: ${FLOWER_USER:-admin}:${FLOWER_PASSWORD}
+      FLOWER_PERSISTENT: "True"
+      FLOWER_DB: /data/flower.db
+    volumes:
+      - ./data/flower:/data
+    depends_on:
+      - redis
