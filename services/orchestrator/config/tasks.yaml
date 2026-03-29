@@ -1,0 +1,165 @@
+##############################################################################
+# CrewAI Task Definitions — Project Nebula
+# Descriptions are in English (backend). Only SEO task output is in Polish.
+##############################################################################
+
+cso_strategy_task:
+  description: >
+    You have been given the following mission brief:
+    - Requested duration: {requested_duration_minutes} minutes
+    - Style hint (optional, may be None): {style_hint}
+    - Forced BPM (optional, may be None): {force_bpm}
+    - Already-used BPM/subgenre combinations to AVOID: {used_combinations}
+
+    Your task:
+    1. Select an exact BPM (e.g., 174.0) that is NOT in the used_combinations list
+       above. If force_bpm is provided, use it but still verify novelty of the
+       subgenre + key combination.
+    2. Select a subgenre that has NOT been used with this BPM recently.
+    3. Choose a key signature (e.g., "D minor", "F# major").
+    4. Write a detailed style_description (3-5 sentences, English) describing
+       the exact sonic character: bass texture, drum pattern, pad/synth character,
+       overall vibe.
+    5. Write a transition_arc (2-3 sentences, English) describing how the mix
+       will evolve over its full duration. Example:
+       "Opens with a deep, minimal intro building tension over the first 5
+       minutes. Drops into full Neurofunk weight at 6 minutes. Transitions
+       through a 20-minute Techstep section before dissolving into rolling
+       Liquid DnB for the final 15 minutes."
+    6. Calculate stem_count: floor(duration_minutes * 2) — minimum 20, maximum 96.
+
+    CRITICAL: The combination (bpm, subgenre, key_signature) MUST be unique
+    and not present in the used_combinations list.
+  expected_output: >
+    A valid JSON object with EXACTLY these keys:
+    {
+      "mix_id": "<the provided mix_id>",
+      "bpm": <float>,
+      "subgenre": "<string>",
+      "key_signature": "<string>",
+      "style_description": "<English string>",
+      "transition_arc": "<English string>",
+      "stem_count": <int>,
+      "requested_duration_minutes": <int>
+    }
+
+audio_prompt_task:
+  description: >
+    Based on this strategic brief:
+    - BPM: {bpm}
+    - Subgenre: {subgenre}
+    - Key: {key_signature}
+    - Style: {style_description}
+    - Arc: {transition_arc}
+    - Number of stems: {stem_count}
+
+    Generate exactly {stem_count} audio stem prompts for Gemini Lyria 3.
+    Each prompt generates a 30-second audio clip. They must:
+    1. Be written in English only.
+    2. Follow the musical arc — intro stems are low-intensity, build to drops,
+       have breakdowns, peak at 60-70% of the mix, then resolve.
+    3. Each prompt must be 40-80 words, highly specific:
+       - Specify exact BPM: "174 BPM drum and bass..."
+       - Describe the drum pattern: amen break / jungle step / half-time / rolling
+       - Describe the bassline: Reese / Neuro / Liquid / Rollers / wobble
+       - Describe the atmosphere: dark/atmospheric/euphoric/clinical/organic
+       - Describe any synths, pads, or melodic elements
+       - Specify the energy level: "building tension", "full drop", "breakdown", "peak energy"
+    4. Assign transition_type: one of: "intro", "build", "drop", "breakdown", "peak", "outro"
+    5. Assign intensity: float 0.0 (calm) to 1.0 (maximum energy)
+
+  expected_output: >
+    A valid JSON object:
+    {
+      "mix_id": "<mix_id>",
+      "prompts": [
+        {
+          "position": 0,
+          "prompt_en": "<40-80 word English prompt for Gemini Lyria 3>",
+          "transition_type": "<intro|build|drop|breakdown|peak|outro>",
+          "intensity": <0.0-1.0>
+        },
+        ...
+      ]
+    }
+
+visual_prompt_task:
+  description: >
+    Create visual prompts for these assets based on the mix brief:
+    - Subgenre: {subgenre}
+    - BPM: {bpm}
+    - Style: {style_description}
+
+    Generate prompts for these 8 assets:
+    1. background_image (16:9) — Main YouTube video background. 1 prompt.
+    2. video_loop (16:9) — 3 Veo video loops for background animation.
+    3. thumbnail (16:9) — Eye-catching YouTube thumbnail. 1 prompt.
+    4. short_background (9:16) — Vertical background for Shorts/TikTok. 1 prompt.
+    5. short_thumbnail (9:16) — TikTok/Shorts cover image. 1 prompt.
+
+    Each prompt must be 30-60 words, photorealistic quality directive, English only.
+    Include: style (cinematic/neon/cyberpunk/organic/industrial), lighting quality,
+    mood, specific visual elements. NEVER use generic terms like "abstract background".
+  expected_output: >
+    A valid JSON object:
+    {
+      "mix_id": "<mix_id>",
+      "prompts": [
+        {
+          "visual_type": "<background_image|video_loop|thumbnail|short_background|short_thumbnail>",
+          "aspect_ratio": "<16:9|9:16>",
+          "prompt_en": "<English prompt>"
+        },
+        ...
+      ]
+    }
+
+polish_seo_task:
+  description: >
+    Generate ALL YouTube/TikTok metadata for this mix. CRITICAL: ALL OUTPUT
+    MUST BE IN POLISH (język polski). Not English. Not mixed. Pure Polish.
+
+    Mix information (in English for your reference only — do not output in English):
+    - Subgenre: {subgenre}
+    - BPM: {bpm}
+    - Duration: {duration_seconds} seconds ({duration_minutes} minutes)
+    - Style: {style_description}
+    - Transition arc: {transition_arc}
+    - Number of chapters: {chapter_count}
+
+    Requirements:
+    1. title_pl: Max 100 characters. Must include: emoji, emotional hook, genre name
+       in Polish or English (as used in Polish YouTube culture), BPM, year.
+       Pattern: "[emoji] [EMOTIONAL HOOK] [Subgenre] | [Duration] MINUT [context] [BPM BPM]"
+       Example: "🔥 2 GODZINY CZYSTEGO NEUROFUNK | Mix 2026 [174 BPM]"
+
+    2. description_pl: 400-800 words. Polish SEO-optimised. Must include:
+       - Opening hook (first 2 lines visible before "show more")
+       - Track listing placeholder (📀 TRACKLIST below)
+       - Chapter timestamps copied from chapters_pl
+       - Channel subscribe call-to-action
+       - 5-8 relevant keyword phrases naturally embedded
+       - Social links placeholder
+
+    3. tags_pl: 30-50 hashtags/tags. Mix of: genre tags (Polish & English),
+       BPM tag, year tag, mood tags in Polish, activity tags
+       ("do jazdy", "do nauki", "praca"), platform tags.
+       Total tag string must be under 500 chars.
+
+    4. chapters_pl: Generate {chapter_count} chapter markers based on the
+       transition arc. Timestamps must be accurate to the arc description.
+       Format: [{"time_str": "00:00", "title_pl": "Intro - Powolne Wejście"}, ...]
+
+    5. shorts_titles_pl: 3 Polish titles for the viral short clips (60s each).
+       Each max 80 chars, must include energy hook and timestamp context.
+       Example: "🔥 NAJLEPSZY DROP | Neurofunk Mix 2026"
+  expected_output: >
+    A valid JSON object with ALL fields in Polish:
+    {
+      "mix_id": "<mix_id>",
+      "title_pl": "<Polish title>",
+      "description_pl": "<Full Polish description>",
+      "tags_pl": ["<tag1_pl>", "<tag2_pl>", ...],
+      "chapters_pl": [{"time_str": "00:00", "title_pl": "<Polish>"}, ...],
+      "shorts_titles_pl": ["<title1_pl>", "<title2_pl>", "<title3_pl>"]
+    }

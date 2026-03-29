@@ -16,6 +16,9 @@ scipy==1.14.1
 audioread==3.0.1
 numba==0.60.0
 
+# Loudness measurement (ITU-R BS.1770-4)
+pyloudnorm==0.1.1
+
 # Stem download helper
 httpx==0.28.1
 aiofiles==24.1.0
