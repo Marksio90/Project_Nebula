@@ -40,9 +40,16 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")
 
     # ── Social / Distribution ─────────────────────────────────────────────
+    # Step 1 — downloaded from Google Cloud Console (OAuth 2.0 client ID)
     youtube_client_secrets_file: str = Field(
         default="/secrets/youtube_client_secrets.json",
         alias="YOUTUBE_CLIENT_SECRETS_FILE",
+    )
+    # Step 2 — generated once by running: python scripts/youtube_auth.py
+    # Contains refresh_token; used for all subsequent autonomous uploads.
+    youtube_token_file: str = Field(
+        default="/secrets/youtube_token.json",
+        alias="YOUTUBE_TOKEN_FILE",
     )
     tiktok_api_key: str = Field(default="", alias="TIKTOK_API_KEY")
 

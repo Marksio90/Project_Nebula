@@ -536,11 +536,28 @@ def upload_to_youtube_agent(
     exports = _exports_dir(mix_id)
 
     # ── Build YouTube API client ──────────────────────────────────────────
+    # Uses the pre-authorized token file (generated once via scripts/youtube_auth.py).
+    # This file contains a refresh_token and is distinct from client_secrets.json.
     try:
         creds = Credentials.from_authorized_user_file(
-            settings.youtube_client_secrets_file,
+            settings.youtube_token_file,   # /secrets/youtube_token.json
             scopes=["https://www.googleapis.com/auth/youtube.upload"],
         )
+        # Auto-refresh the access token if expired (requires refresh_token in file)
+        if creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            # Persist refreshed token back to disk
+            import json as _json
+            with open(settings.youtube_token_file, "w") as _tf:
+                _json.dump({
+                    "token":         creds.token,
+                    "refresh_token": creds.refresh_token,
+                    "token_uri":     creds.token_uri,
+                    "client_id":     creds.client_id,
+                    "client_secret": creds.client_secret,
+                    "scopes":        list(creds.scopes or []),
+                }, _tf)
         youtube = yt_build("youtube", "v3", credentials=creds, cache_discovery=False)
     except Exception as exc:
         log.error("YouTube auth failed: %s", exc)
