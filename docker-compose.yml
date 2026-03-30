@@ -128,6 +128,30 @@ services:
       retries: 5
 
   # --------------------------------------------------------------------------
+  # DB MIGRATE — one-shot Alembic runner; exits 0 on success
+  # All application services depend on this completing successfully before
+  # they start, guaranteeing the schema is always up-to-date.
+  # --------------------------------------------------------------------------
+  db_migrate:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile   # reuse orchestrator image (has alembic + psycopg2)
+    container_name: nebula_db_migrate
+    restart: "no"                                    # run once and exit
+    networks:
+      - nebula_internal
+    environment:
+      <<: *common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo '[migrate] Waiting for postgres...' &&
+        alembic upgrade head &&
+        echo '[migrate] Schema up-to-date.'"
+
+  # --------------------------------------------------------------------------
   # API GATEWAY — FastAPI HTTP entry-point, triggers Celery pipelines
   # --------------------------------------------------------------------------
   api_gateway:
@@ -147,8 +171,8 @@ services:
     environment:
       <<: *common-env
     depends_on:
-      postgres:
-        condition: service_healthy
+      db_migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
@@ -179,8 +203,8 @@ services:
       CELERY_CONCURRENCY: ${ORCHESTRATOR_CONCURRENCY:-4}
       CREWAI_VERBOSE: ${CREWAI_VERBOSE:-false}
     depends_on:
-      postgres:
-        condition: service_healthy
+      db_migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     command: >
@@ -216,8 +240,8 @@ services:
       OPENBLAS_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
     depends_on:
-      postgres:
-        condition: service_healthy
+      db_migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     command: >
@@ -256,8 +280,8 @@ services:
       CELERY_CONCURRENCY: ${VIDEO_CONCURRENCY:-2}
       FFMPEG_HWACCEL: ${FFMPEG_HWACCEL:-auto}   # auto | nvenc | vaapi | none
     depends_on:
-      postgres:
-        condition: service_healthy
+      db_migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     command: >
