@@ -37,7 +37,19 @@ class Settings(BaseSettings):
 
     # ── AI APIs ───────────────────────────────────────────────────────────
     openai_api_key: str = Field(..., alias="OPENAI_API_KEY")
-    gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+
+    # Replicate — used by ReplicateMusicGenProvider (default audio backend)
+    replicate_api_token: str = Field(default="", alias="REPLICATE_API_TOKEN")
+
+    # ── Media Provider Selection ──────────────────────────────────────────
+    # Swap providers without touching code — just change these env vars.
+    #   audio_provider : replicate (default) | gemini
+    #   image_provider : dalle3     (default) | gemini
+    #   video_provider : ffmpeg     (default) | gemini
+    audio_provider: str = Field(default="replicate", alias="AUDIO_PROVIDER")
+    image_provider: str = Field(default="dalle3",    alias="IMAGE_PROVIDER")
+    video_provider: str = Field(default="ffmpeg",    alias="VIDEO_PROVIDER")
 
     # ── Social / Distribution ─────────────────────────────────────────────
     # Step 1 — downloaded from Google Cloud Console (OAuth 2.0 client ID)

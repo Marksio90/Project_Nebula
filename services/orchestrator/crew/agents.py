@@ -5,16 +5,16 @@ Public entry-point functions for all Project Nebula agents.
 These are the functions imported and called by shared/tasks/definitions.py.
 
 Each function:
-  1. Builds/runs the appropriate CrewAI crew OR calls the Gemini API directly
+  1. Builds/runs the appropriate CrewAI crew OR delegates to a MediaGenerator
   2. Parses the structured output into a typed Pydantic schema
   3. Returns the schema object — no raw dicts leak out
 
-Gemini API usage:
-  - Lyria 3:          Audio generation (30-second stems)
-  - Imagen 3 (Nano Banana 2 equivalent): Static image generation
-  - Veo 2:            Short video loop generation (5-10 seconds)
+Media generation is provider-agnostic — controlled by env vars:
+  AUDIO_PROVIDER=replicate (default) | gemini
+  IMAGE_PROVIDER=dalle3    (default) | gemini
+  VIDEO_PROVIDER=ffmpeg    (default) | gemini
 
-All media is downloaded to the shared volume mounts defined in Settings.
+All media is written to the shared volume mounts defined in Settings.
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -27,7 +27,7 @@ import time
 import uuid
 from pathlib import Path
 
-import httpx
+import httpx  # TikTok upload
 from sqlalchemy import select, update
 
 from shared.config import get_settings
@@ -53,7 +53,8 @@ from shared.schemas.events import (
     VisualPrompt,
     VisualPromptBatch,
 )
-from shared.utils.retry import retry_gemini_api, retry_openai_api, retry_youtube_api, retry_tiktok_api
+from shared.media.factory import get_audio_generator, get_image_generator, get_video_generator
+from shared.utils.retry import retry_openai_api, retry_youtube_api, retry_tiktok_api
 
 log = logging.getLogger("nebula.agents")
 settings = get_settings()
@@ -81,19 +82,6 @@ def _parse_crew_json(raw_output: str, schema_hint: str = "") -> dict:
     except json.JSONDecodeError as exc:
         log.error("JSON parse error in crew output (%s): %s\nRaw: %.500s", schema_hint, exc, raw_output)
         raise ValueError(f"Agent returned invalid JSON for {schema_hint}: {exc}") from exc
-
-
-def _gemini_client():
-    """Return an initialised Google Generative AI client."""
-    import google.generativeai as genai
-    genai.configure(api_key=settings.gemini_api_key)
-    return genai
-
-
-def _google_genai_client():
-    """Return the newer google-genai client (for Imagen/Veo)."""
-    from google import genai as google_genai
-    return google_genai.Client(api_key=settings.gemini_api_key)
 
 
 def _stems_dir(mix_id: str) -> Path:
@@ -200,18 +188,24 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. Stem Fetcher — Gemini Lyria 3
+# 3. Stem Fetcher — provider-agnostic via MediaGenerator factory
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_stems_batch(batch: AudioPromptBatch) -> StemBatchResult:
     """
-    Calls Gemini Lyria 3 for every stem prompt in the batch.
-    Each call is individually wrapped with tenacity for rate-limit resilience.
+    Generates every stem in the batch via the configured AudioGenerator.
+    Provider is selected at runtime from AUDIO_PROVIDER env var:
+      replicate → ReplicateMusicGenProvider (~$0.008/stem, production-ready)
+      gemini    → GeminiLyriaProvider (experimental, requires waitlist access)
+
     Files are written as WAV to STEMS_DIR/{mix_id}/{position:04d}.wav
     """
-    mix_id  = batch.strategy.mix_id
-    out_dir = _stems_dir(mix_id)
+    mix_id    = batch.strategy.mix_id
+    out_dir   = _stems_dir(mix_id)
+    generator = get_audio_generator()
     results: list[StemFetchResult] = []
+
+    log.info("Generating %d stems via %s", len(batch.prompts), generator.provider_name)
 
     # Load existing stem IDs from DB (needed for result records)
     with get_sync_db() as db:
@@ -225,12 +219,12 @@ def fetch_stems_batch(batch: AudioPromptBatch) -> StemBatchResult:
         file_path = str(out_dir / f"{prompt.position:04d}.wav")
 
         try:
-            _fetch_single_stem(
-                prompt_text=prompt.prompt_en,
-                output_path=file_path,
+            generator.generate_stem(
+                prompt=prompt.prompt_en,
                 bpm=batch.strategy.bpm,
+                duration_s=settings.lyria_stem_duration_seconds,
+                output_path=file_path,
             )
-            # Mark generating → ready in DB
             with get_sync_db() as db:
                 db.execute(
                     update(Stem)
@@ -241,7 +235,7 @@ def fetch_stems_batch(batch: AudioPromptBatch) -> StemBatchResult:
                 mix_id=mix_id, stem_id=stem_id,
                 position=prompt.position, file_path=file_path, status="ready",
             ))
-            log.debug("Stem %04d fetched: %s", prompt.position, file_path)
+            log.debug("Stem %04d ready: %s", prompt.position, file_path)
 
         except Exception as exc:
             log.error("Stem %04d FAILED: %s", prompt.position, exc)
@@ -257,53 +251,6 @@ def fetch_stems_batch(batch: AudioPromptBatch) -> StemBatchResult:
             ))
 
     return StemBatchResult(mix_id=mix_id, results=results)
-
-
-@retry_gemini_api
-def _fetch_single_stem(prompt_text: str, output_path: str, bpm: float) -> None:
-    """
-    Single Gemini Lyria 3 API call with tenacity-wrapped retries.
-
-    Gemini Lyria 3 audio generation via the generative AI SDK.
-    The model generates a 30-second musical audio clip from the text prompt.
-    Audio data is written as raw PCM WAV to output_path.
-    """
-    import google.generativeai as genai
-    from google.generativeai import types
-
-    genai.configure(api_key=settings.gemini_api_key)
-
-    # Lyria 3 music generation via the multimodal API
-    model = genai.GenerativeModel(model_name="lyria-realtime-exp")
-
-    # Structured prompt with technical parameters
-    full_prompt = (
-        f"{prompt_text}\n\n"
-        f"Technical parameters: {bpm} BPM, 30 seconds duration, "
-        f"stereo, 44100 Hz sample rate, high quality production."
-    )
-
-    response = model.generate_content(
-        full_prompt,
-        generation_config=types.GenerationConfig(
-            response_mime_type="audio/wav",
-        ),
-    )
-
-    # Extract audio bytes from response
-    audio_bytes: bytes | None = None
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "inline_data") and part.inline_data:
-            audio_bytes = part.inline_data.data
-            break
-
-    if not audio_bytes:
-        raise ValueError("Lyria 3 returned no audio data for prompt")
-
-    with open(output_path, "wb") as f:
-        f.write(audio_bytes)
-
-    log.debug("Wrote %.1f KB to %s", len(audio_bytes) / 1024, output_path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -343,13 +290,22 @@ def run_visual_prompt_engineer(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Visual Fetcher — Gemini Imagen 3 / Veo 2
+# 5. Visual Fetcher — provider-agnostic via MediaGenerator factory
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_visuals_batch(mix_id: str) -> None:
     """
-    Fetches all pending Visual rows for a mix from Gemini.
-    Images via Imagen 3 (Nano Banana 2), video loops via Veo 2.
+    Generates all pending Visual rows via the configured Image/VideoGenerator.
+
+    Provider selection (env vars):
+      IMAGE_PROVIDER=dalle3   → DallE3Provider      (~$0.080/image, HD vivid)
+      IMAGE_PROVIDER=gemini   → GeminiImagenProvider (experimental)
+      VIDEO_PROVIDER=ffmpeg   → FFmpegKenBurnsProvider (free, animated Ken Burns)
+      VIDEO_PROVIDER=gemini   → GeminiVeoProvider    (experimental)
+
+    For video_loop visuals, the pipeline first generates a static image and
+    then animates it with the VideoGenerator. This guarantees that even the
+    FFmpeg Ken Burns provider produces visually rich, content-coherent loops.
     """
     with get_sync_db() as db:
         pending = db.execute(
@@ -359,117 +315,62 @@ def fetch_visuals_batch(mix_id: str) -> None:
             )
         ).scalars().all()
 
-    out_dir = _visuals_dir(mix_id)
+    out_dir       = _visuals_dir(mix_id)
+    img_generator = get_image_generator()
+    vid_generator = get_video_generator()
+
+    log.info(
+        "Generating %d visuals — img:%s vid:%s",
+        len(pending), img_generator.provider_name, vid_generator.provider_name,
+    )
 
     for visual in pending:
+        visual_id = str(visual.id)
         try:
             if visual.visual_type.value == "video_loop":
-                file_path = _fetch_veo_video(
+                # Step 1: generate a source image
+                src_image_path = str(out_dir / f"{visual_id}_src.png")
+                img_generator.generate_image(
                     prompt=visual.gemini_prompt,
-                    output_dir=out_dir,
                     aspect_ratio=visual.aspect_ratio,
-                    visual_id=str(visual.id),
+                    output_path=src_image_path,
                 )
+                # Step 2: animate into a video loop
+                output_path = str(out_dir / f"{visual_id}.mp4")
+                vid_generator.generate_video_loop(
+                    prompt=visual.gemini_prompt,
+                    aspect_ratio=visual.aspect_ratio,
+                    output_path=output_path,
+                    source_image_path=src_image_path,
+                )
+                file_path = output_path
             else:
-                file_path = _fetch_imagen(
+                # Static image (background_still, album_art, short_cover, etc.)
+                ext = "png"
+                output_path = str(out_dir / f"{visual_id}.{ext}")
+                img_generator.generate_image(
                     prompt=visual.gemini_prompt,
-                    output_dir=out_dir,
                     aspect_ratio=visual.aspect_ratio,
-                    visual_id=str(visual.id),
+                    output_path=output_path,
                 )
+                file_path = output_path
 
             with get_sync_db() as db:
                 db.execute(
                     update(Visual)
                     .where(Visual.id == visual.id)
-                    .values(file_path=str(file_path), status=VisualStatus.READY)
+                    .values(file_path=file_path, status=VisualStatus.READY)
                 )
-            log.debug("Visual %s fetched: %s", visual.id, file_path)
+            log.debug("Visual %s ready: %s", visual_id, file_path)
 
         except Exception as exc:
-            log.error("Visual %s FAILED: %s", visual.id, exc)
+            log.error("Visual %s FAILED: %s", visual_id, exc)
             with get_sync_db() as db:
                 db.execute(
                     update(Visual)
                     .where(Visual.id == visual.id)
                     .values(status=VisualStatus.FAILED, error_message=str(exc)[:1000])
                 )
-
-
-@retry_gemini_api
-def _fetch_imagen(
-    prompt: str,
-    output_dir: Path,
-    aspect_ratio: str,
-    visual_id: str,
-) -> Path:
-    """Generate a static image via Imagen 3 (Nano Banana 2 equivalent)."""
-    from google import genai as google_genai
-    from google.genai import types
-
-    client = google_genai.Client(api_key=settings.gemini_api_key)
-
-    # Aspect ratio mapping for Imagen API
-    ar_map = {"16:9": "16:9", "9:16": "9:16"}
-    api_ar = ar_map.get(aspect_ratio, "16:9")
-
-    response = client.models.generate_images(
-        model="imagen-3.0-generate-002",
-        prompt=prompt,
-        config=types.GenerateImagesConfig(
-            number_of_images=1,
-            aspect_ratio=api_ar,
-            safety_filter_level="block_only_high",
-        ),
-    )
-
-    if not response.generated_images:
-        raise ValueError(f"Imagen 3 returned no images for visual {visual_id}")
-
-    image_bytes = response.generated_images[0].image.image_bytes
-    output_path = output_dir / f"{visual_id}.png"
-    output_path.write_bytes(image_bytes)
-    return output_path
-
-
-@retry_gemini_api
-def _fetch_veo_video(
-    prompt: str,
-    output_dir: Path,
-    aspect_ratio: str,
-    visual_id: str,
-) -> Path:
-    """Generate a short video loop via Veo 2."""
-    from google import genai as google_genai
-    from google.genai import types
-
-    client = google_genai.Client(api_key=settings.gemini_api_key)
-
-    operation = client.models.generate_videos(
-        model="veo-2.0-generate-001",
-        prompt=prompt,
-        config=types.GenerateVideosConfig(
-            aspect_ratio=aspect_ratio,
-            duration_seconds=8,
-            number_of_videos=1,
-        ),
-    )
-
-    # Poll until complete (Veo is async)
-    while not operation.done:
-        time.sleep(10)
-        operation = client.operations.get(operation)
-
-    if not operation.response or not operation.response.generated_videos:
-        raise ValueError(f"Veo 2 returned no video for visual {visual_id}")
-
-    video = operation.response.generated_videos[0]
-    output_path = output_dir / f"{visual_id}.mp4"
-
-    # Download the video bytes
-    video_bytes = client.files.download(file=video.video)
-    output_path.write_bytes(video_bytes)
-    return output_path
 
 
 # ─────────────────────────────────────────────────────────────────────────────
