@@ -64,6 +64,13 @@ x-storage-volumes: &storage-volumes
   - nebula_visuals:/mnt/visuals
   - nebula_exports:/mnt/exports
 
+x-storage-volumes-secrets: &storage-volumes-secrets
+  - nebula_stems:/mnt/stems
+  - nebula_mixes:/mnt/mixes
+  - nebula_visuals:/mnt/visuals
+  - nebula_exports:/mnt/exports
+  - ./secrets:/secrets:ro
+
 x-worker-base: &worker-base
   restart: unless-stopped
   networks:
@@ -165,9 +172,7 @@ services:
       - nebula_public
     ports:
       - "8000:8000"
-    volumes:
-      - *storage-volumes
-      - ./secrets:/secrets:ro
+    volumes: *storage-volumes-secrets
     environment:
       <<: *common-env
     depends_on:
@@ -194,9 +199,7 @@ services:
     restart: unless-stopped
     networks:
       - nebula_internal
-    volumes:
-      - *storage-volumes
-      - ./secrets:/secrets:ro
+    volumes: *storage-volumes-secrets
     environment:
       <<: *common-env
       CELERY_QUEUES: orchestration,upload
@@ -229,8 +232,7 @@ services:
     restart: unless-stopped
     networks:
       - nebula_internal
-    volumes:
-      - *storage-volumes
+    volumes: *storage-volumes
     environment:
       <<: *common-env
       CELERY_QUEUES: dsp
@@ -272,8 +274,7 @@ services:
     restart: unless-stopped
     networks:
       - nebula_internal
-    volumes:
-      - *storage-volumes
+    volumes: *storage-volumes
     environment:
       <<: *common-env
       CELERY_QUEUES: video
