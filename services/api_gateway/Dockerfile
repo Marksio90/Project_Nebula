@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY requirements.txt .
+COPY services/api_gateway/requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # shared/ and services/ are copied from the repo root build context.
