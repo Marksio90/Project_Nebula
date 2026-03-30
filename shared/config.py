@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     visuals_dir: str = Field(default="/mnt/visuals", alias="VISUALS_DIR")
     exports_dir: str = Field(default="/mnt/exports", alias="EXPORTS_DIR")
 
+    # ── FFmpeg ────────────────────────────────────────────────────────────────
+    ffmpeg_hwaccel: str = Field(
+        default="auto",
+        alias="FFMPEG_HWACCEL",
+        description="Hardware acceleration: auto | nvenc | vaapi | none",
+    )
+
     # ── Celery Tuning ─────────────────────────────────────────────────────
     celery_task_serializer: str = "json"
     celery_result_serializer: str = "json"

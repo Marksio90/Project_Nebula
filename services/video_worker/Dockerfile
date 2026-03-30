@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-COPY ../../shared /app/shared
-COPY . /app/services/video_worker
+COPY shared /app/shared
+COPY services/video_worker /app/services/video_worker
 
 ENV PYTHONPATH=/app

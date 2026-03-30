@@ -19,9 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copy shared library + service code
-COPY ../../shared /app/shared
-COPY . /app/services/api_gateway
+# shared/ and services/ are copied from the repo root build context.
+# Build with: docker compose build  (context is repo root via docker-compose.yml)
+COPY shared /app/shared
+COPY services/api_gateway /app/services/api_gateway
 
 ENV PYTHONPATH=/app
 
