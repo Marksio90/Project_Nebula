@@ -1,0 +1,788 @@
+"""
+services/orchestrator/crew/agents.py
+─────────────────────────────────────────────────────────────────────────────
+Public entry-point functions for all Project Nebula agents.
+These are the functions imported and called by shared/tasks/definitions.py.
+
+Each function:
+  1. Builds/runs the appropriate CrewAI crew OR calls the Gemini API directly
+  2. Parses the structured output into a typed Pydantic schema
+  3. Returns the schema object — no raw dicts leak out
+
+Gemini API usage:
+  - Lyria 3:          Audio generation (30-second stems)
+  - Imagen 3 (Nano Banana 2 equivalent): Static image generation
+  - Veo 2:            Short video loop generation (5-10 seconds)
+
+All media is downloaded to the shared volume mounts defined in Settings.
+─────────────────────────────────────────────────────────────────────────────
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import time
+import uuid
+from pathlib import Path
+
+import httpx
+from sqlalchemy import select, update
+
+from shared.config import get_settings
+from shared.db.models import (
+    BpmSubgenreRegistry,
+    ContentType,
+    Mix,
+    Platform,
+    Stem,
+    StemStatus,
+    Visual,
+    VisualStatus,
+)
+from shared.db.session import get_sync_db
+from shared.schemas.events import (
+    AudioPromptBatch,
+    CSOStrategy,
+    PolishSEOMetadata,
+    StemBatchResult,
+    StemFetchResult,
+    StemPrompt,
+    UploadResult,
+    VisualPrompt,
+    VisualPromptBatch,
+)
+from shared.utils.retry import retry_gemini_api, retry_openai_api, retry_youtube_api, retry_tiktok_api
+
+log = logging.getLogger("nebula.agents")
+settings = get_settings()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _parse_crew_json(raw_output: str, schema_hint: str = "") -> dict:
+    """
+    Extract a JSON object from a CrewAI agent's raw string output.
+    Agents sometimes wrap JSON in markdown code blocks — strip those first.
+    """
+    text = raw_output.strip()
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(
+            line for line in lines
+            if not line.strip().startswith("```")
+        ).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        log.error("JSON parse error in crew output (%s): %s\nRaw: %.500s", schema_hint, exc, raw_output)
+        raise ValueError(f"Agent returned invalid JSON for {schema_hint}: {exc}") from exc
+
+
+def _gemini_client():
+    """Return an initialised Google Generative AI client."""
+    import google.generativeai as genai
+    genai.configure(api_key=settings.gemini_api_key)
+    return genai
+
+
+def _google_genai_client():
+    """Return the newer google-genai client (for Imagen/Veo)."""
+    from google import genai as google_genai
+    return google_genai.Client(api_key=settings.gemini_api_key)
+
+
+def _stems_dir(mix_id: str) -> Path:
+    p = Path(settings.stems_dir) / mix_id
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _visuals_dir(mix_id: str) -> Path:
+    p = Path(settings.visuals_dir) / mix_id
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _exports_dir(mix_id: str) -> Path:
+    p = Path(settings.exports_dir) / mix_id
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. CSO Agent
+# ─────────────────────────────────────────────────────────────────────────────
+
+@retry_openai_api
+def run_cso_agent(
+    mix_id: str,
+    requested_duration_minutes: int,
+    style_hint: str | None,
+    force_bpm: int | None,
+) -> CSOStrategy:
+    """
+    Runs the Chief Strategy Officer CrewAI crew.
+    Queries the dedup registry before kicking off the crew so the agent
+    has full visibility of all previously used combinations.
+    """
+    from services.orchestrator.crew.crew import build_strategy_crew
+
+    # Load the full registry to pass as context to the CSO
+    with get_sync_db() as db:
+        rows = db.execute(
+            select(
+                BpmSubgenreRegistry.bpm,
+                BpmSubgenreRegistry.subgenre,
+                BpmSubgenreRegistry.key_signature,
+            )
+        ).fetchall()
+
+    used_combinations = [
+        {"bpm": r.bpm, "subgenre": r.subgenre, "key_signature": r.key_signature}
+        for r in rows
+    ]
+    used_json = json.dumps(used_combinations)
+
+    crew = build_strategy_crew(
+        mix_id=mix_id,
+        requested_duration_minutes=requested_duration_minutes,
+        style_hint=style_hint,
+        force_bpm=force_bpm,
+        used_combinations_json=used_json,
+    )
+
+    result = crew.kickoff()
+    raw = result.raw if hasattr(result, "raw") else str(result)
+    data = _parse_crew_json(raw, "CSOStrategy")
+    data["mix_id"] = mix_id  # Ensure mix_id is present
+
+    log.info("CSO output: bpm=%.1f subgenre=%s", data.get("bpm"), data.get("subgenre"))
+    return CSOStrategy(**data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Audio Prompt Engineer
+# ─────────────────────────────────────────────────────────────────────────────
+
+@retry_openai_api
+def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
+    """
+    Runs the Audio Prompt Engineer crew to generate stem_count English
+    Lyria 3 prompts forming a coherent musical arc.
+    """
+    from services.orchestrator.crew.crew import build_audio_prompt_crew
+
+    crew = build_audio_prompt_crew(
+        mix_id=strategy.mix_id,
+        bpm=strategy.bpm,
+        subgenre=strategy.subgenre,
+        key_signature=strategy.key_signature,
+        style_description=strategy.style_description,
+        transition_arc=strategy.transition_arc,
+        stem_count=strategy.stem_count,
+    )
+
+    result = crew.kickoff()
+    raw = result.raw if hasattr(result, "raw") else str(result)
+    data = _parse_crew_json(raw, "AudioPromptBatch")
+    data["mix_id"] = strategy.mix_id
+    data["strategy"] = strategy.model_dump()
+
+    # Validate each prompt entry
+    prompts = [StemPrompt(**p) for p in data.get("prompts", [])]
+    log.info("Audio prompts generated: %d stems for mix %s", len(prompts), strategy.mix_id)
+    return AudioPromptBatch(mix_id=strategy.mix_id, strategy=strategy, prompts=prompts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Stem Fetcher — Gemini Lyria 3
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_stems_batch(batch: AudioPromptBatch) -> StemBatchResult:
+    """
+    Calls Gemini Lyria 3 for every stem prompt in the batch.
+    Each call is individually wrapped with tenacity for rate-limit resilience.
+    Files are written as WAV to STEMS_DIR/{mix_id}/{position:04d}.wav
+    """
+    mix_id  = batch.strategy.mix_id
+    out_dir = _stems_dir(mix_id)
+    results: list[StemFetchResult] = []
+
+    # Load existing stem IDs from DB (needed for result records)
+    with get_sync_db() as db:
+        stem_rows = db.execute(
+            select(Stem.id, Stem.position).where(Stem.mix_id == mix_id)
+        ).fetchall()
+    stem_id_map = {r.position: r.id for r in stem_rows}
+
+    for prompt in batch.prompts:
+        stem_id   = stem_id_map.get(prompt.position, str(uuid.uuid4()))
+        file_path = str(out_dir / f"{prompt.position:04d}.wav")
+
+        try:
+            _fetch_single_stem(
+                prompt_text=prompt.prompt_en,
+                output_path=file_path,
+                bpm=batch.strategy.bpm,
+            )
+            # Mark generating → ready in DB
+            with get_sync_db() as db:
+                db.execute(
+                    update(Stem)
+                    .where(Stem.mix_id == mix_id, Stem.position == prompt.position)
+                    .values(status=StemStatus.READY, file_path=file_path)
+                )
+            results.append(StemFetchResult(
+                mix_id=mix_id, stem_id=stem_id,
+                position=prompt.position, file_path=file_path, status="ready",
+            ))
+            log.debug("Stem %04d fetched: %s", prompt.position, file_path)
+
+        except Exception as exc:
+            log.error("Stem %04d FAILED: %s", prompt.position, exc)
+            with get_sync_db() as db:
+                db.execute(
+                    update(Stem)
+                    .where(Stem.mix_id == mix_id, Stem.position == prompt.position)
+                    .values(status=StemStatus.FAILED, error_message=str(exc)[:1000])
+                )
+            results.append(StemFetchResult(
+                mix_id=mix_id, stem_id=stem_id,
+                position=prompt.position, file_path="", status="failed", error=str(exc),
+            ))
+
+    return StemBatchResult(mix_id=mix_id, results=results)
+
+
+@retry_gemini_api
+def _fetch_single_stem(prompt_text: str, output_path: str, bpm: float) -> None:
+    """
+    Single Gemini Lyria 3 API call with tenacity-wrapped retries.
+
+    Gemini Lyria 3 audio generation via the generative AI SDK.
+    The model generates a 30-second musical audio clip from the text prompt.
+    Audio data is written as raw PCM WAV to output_path.
+    """
+    import google.generativeai as genai
+    from google.generativeai import types
+
+    genai.configure(api_key=settings.gemini_api_key)
+
+    # Lyria 3 music generation via the multimodal API
+    model = genai.GenerativeModel(model_name="lyria-realtime-exp")
+
+    # Structured prompt with technical parameters
+    full_prompt = (
+        f"{prompt_text}\n\n"
+        f"Technical parameters: {bpm} BPM, 30 seconds duration, "
+        f"stereo, 44100 Hz sample rate, high quality production."
+    )
+
+    response = model.generate_content(
+        full_prompt,
+        generation_config=types.GenerationConfig(
+            response_mime_type="audio/wav",
+        ),
+    )
+
+    # Extract audio bytes from response
+    audio_bytes: bytes | None = None
+    for part in response.candidates[0].content.parts:
+        if hasattr(part, "inline_data") and part.inline_data:
+            audio_bytes = part.inline_data.data
+            break
+
+    if not audio_bytes:
+        raise ValueError("Lyria 3 returned no audio data for prompt")
+
+    with open(output_path, "wb") as f:
+        f.write(audio_bytes)
+
+    log.debug("Wrote %.1f KB to %s", len(audio_bytes) / 1024, output_path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Visual Prompt Engineer
+# ─────────────────────────────────────────────────────────────────────────────
+
+@retry_openai_api
+def run_visual_prompt_engineer(
+    mix_id: str,
+    subgenre: str | None,
+    bpm: float | None,
+    style_hint: str | None,
+) -> VisualPromptBatch:
+    """
+    Runs the Visual Prompt Engineer crew to generate image/video prompts.
+    """
+    from services.orchestrator.crew.crew import build_visual_prompt_crew
+
+    with get_sync_db() as db:
+        mix = db.execute(select(Mix).where(Mix.id == mix_id)).scalar_one()
+
+    crew = build_visual_prompt_crew(
+        mix_id=mix_id,
+        subgenre=mix.subgenre or subgenre or "Drum and Bass",
+        bpm=mix.bpm or bpm or 174.0,
+        style_description=style_hint or f"{mix.subgenre} drum and bass mix at {mix.bpm} BPM",
+    )
+
+    result = crew.kickoff()
+    raw  = result.raw if hasattr(result, "raw") else str(result)
+    data = _parse_crew_json(raw, "VisualPromptBatch")
+    data["mix_id"] = mix_id
+
+    prompts = [VisualPrompt(**p) for p in data.get("prompts", [])]
+    log.info("Visual prompts generated: %d assets for mix %s", len(prompts), mix_id)
+    return VisualPromptBatch(mix_id=mix_id, prompts=prompts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Visual Fetcher — Gemini Imagen 3 / Veo 2
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_visuals_batch(mix_id: str) -> None:
+    """
+    Fetches all pending Visual rows for a mix from Gemini.
+    Images via Imagen 3 (Nano Banana 2), video loops via Veo 2.
+    """
+    with get_sync_db() as db:
+        pending = db.execute(
+            select(Visual).where(
+                Visual.mix_id == mix_id,
+                Visual.status == VisualStatus.PENDING,
+            )
+        ).scalars().all()
+
+    out_dir = _visuals_dir(mix_id)
+
+    for visual in pending:
+        try:
+            if visual.visual_type.value == "video_loop":
+                file_path = _fetch_veo_video(
+                    prompt=visual.gemini_prompt,
+                    output_dir=out_dir,
+                    aspect_ratio=visual.aspect_ratio,
+                    visual_id=str(visual.id),
+                )
+            else:
+                file_path = _fetch_imagen(
+                    prompt=visual.gemini_prompt,
+                    output_dir=out_dir,
+                    aspect_ratio=visual.aspect_ratio,
+                    visual_id=str(visual.id),
+                )
+
+            with get_sync_db() as db:
+                db.execute(
+                    update(Visual)
+                    .where(Visual.id == visual.id)
+                    .values(file_path=str(file_path), status=VisualStatus.READY)
+                )
+            log.debug("Visual %s fetched: %s", visual.id, file_path)
+
+        except Exception as exc:
+            log.error("Visual %s FAILED: %s", visual.id, exc)
+            with get_sync_db() as db:
+                db.execute(
+                    update(Visual)
+                    .where(Visual.id == visual.id)
+                    .values(status=VisualStatus.FAILED, error_message=str(exc)[:1000])
+                )
+
+
+@retry_gemini_api
+def _fetch_imagen(
+    prompt: str,
+    output_dir: Path,
+    aspect_ratio: str,
+    visual_id: str,
+) -> Path:
+    """Generate a static image via Imagen 3 (Nano Banana 2 equivalent)."""
+    from google import genai as google_genai
+    from google.genai import types
+
+    client = google_genai.Client(api_key=settings.gemini_api_key)
+
+    # Aspect ratio mapping for Imagen API
+    ar_map = {"16:9": "16:9", "9:16": "9:16"}
+    api_ar = ar_map.get(aspect_ratio, "16:9")
+
+    response = client.models.generate_images(
+        model="imagen-3.0-generate-002",
+        prompt=prompt,
+        config=types.GenerateImagesConfig(
+            number_of_images=1,
+            aspect_ratio=api_ar,
+            safety_filter_level="block_only_high",
+        ),
+    )
+
+    if not response.generated_images:
+        raise ValueError(f"Imagen 3 returned no images for visual {visual_id}")
+
+    image_bytes = response.generated_images[0].image.image_bytes
+    output_path = output_dir / f"{visual_id}.png"
+    output_path.write_bytes(image_bytes)
+    return output_path
+
+
+@retry_gemini_api
+def _fetch_veo_video(
+    prompt: str,
+    output_dir: Path,
+    aspect_ratio: str,
+    visual_id: str,
+) -> Path:
+    """Generate a short video loop via Veo 2."""
+    from google import genai as google_genai
+    from google.genai import types
+
+    client = google_genai.Client(api_key=settings.gemini_api_key)
+
+    operation = client.models.generate_videos(
+        model="veo-2.0-generate-001",
+        prompt=prompt,
+        config=types.GenerateVideosConfig(
+            aspect_ratio=aspect_ratio,
+            duration_seconds=8,
+            number_of_videos=1,
+        ),
+    )
+
+    # Poll until complete (Veo is async)
+    while not operation.done:
+        time.sleep(10)
+        operation = client.operations.get(operation)
+
+    if not operation.response or not operation.response.generated_videos:
+        raise ValueError(f"Veo 2 returned no video for visual {visual_id}")
+
+    video = operation.response.generated_videos[0]
+    output_path = output_dir / f"{visual_id}.mp4"
+
+    # Download the video bytes
+    video_bytes = client.files.download(file=video.video)
+    output_path.write_bytes(video_bytes)
+    return output_path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. Polish SEO Agent
+# ─────────────────────────────────────────────────────────────────────────────
+
+@retry_openai_api
+def run_polish_seo_agent(
+    mix_id: str,
+    bpm: float | None,
+    subgenre: str | None,
+    style_hint: str | None,
+    actual_duration_seconds: float | None,
+) -> PolishSEOMetadata:
+    """
+    Runs the Polish SEO & Growth Hacker CrewAI crew.
+    ALL output is in Polish (język polski).
+    """
+    from services.orchestrator.crew.crew import build_seo_crew
+
+    with get_sync_db() as db:
+        mix = db.execute(select(Mix).where(Mix.id == mix_id)).scalar_one()
+
+    crew = build_seo_crew(
+        mix_id=mix_id,
+        bpm=mix.bpm or bpm or 174.0,
+        subgenre=mix.subgenre or subgenre or "Drum and Bass",
+        style_description=mix.style_hint or style_hint or "",
+        transition_arc="",  # Could be stored in Mix if needed
+        actual_duration_seconds=mix.actual_duration_seconds or actual_duration_seconds or 2700.0,
+        style_hint=mix.style_hint,
+    )
+
+    result = crew.kickoff()
+    raw  = result.raw if hasattr(result, "raw") else str(result)
+    data = _parse_crew_json(raw, "PolishSEOMetadata")
+    data["mix_id"] = mix_id
+
+    log.info("Polish SEO ready: title='%s'", data.get("title_pl", "")[:60])
+    return PolishSEOMetadata(**data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. YouTube Upload Agent
+# ─────────────────────────────────────────────────────────────────────────────
+
+@retry_youtube_api
+def upload_to_youtube_agent(
+    mix_id: str,
+    seo: dict,
+    viral_shorts: list[dict],
+) -> list[UploadResult]:
+    """
+    Uploads the full mix video and YouTube Shorts to YouTube Data API v3.
+    Uses OAuth2 service account credentials from the mounted secrets file.
+
+    Returns a list of UploadResult objects — one per upload attempt.
+    """
+    from googleapiclient.discovery import build as yt_build
+    from googleapiclient.http import MediaFileUpload
+    from google.oauth2.credentials import Credentials
+
+    results: list[UploadResult] = []
+    exports = _exports_dir(mix_id)
+
+    # ── Build YouTube API client ──────────────────────────────────────────
+    try:
+        creds = Credentials.from_authorized_user_file(
+            settings.youtube_client_secrets_file,
+            scopes=["https://www.googleapis.com/auth/youtube.upload"],
+        )
+        youtube = yt_build("youtube", "v3", credentials=creds, cache_discovery=False)
+    except Exception as exc:
+        log.error("YouTube auth failed: %s", exc)
+        raise
+
+    # ── Upload full mix (16:9) ────────────────────────────────────────────
+    with get_sync_db() as db:
+        mix = db.execute(select(Mix).where(Mix.id == mix_id)).scalar_one()
+
+    if mix.full_video_path and os.path.exists(mix.full_video_path):
+        chapters_body = "\n".join(
+            f"{c['time_str']} {c['title_pl']}"
+            for c in (seo.get("chapters_pl") or [])
+        )
+        full_description = (
+            f"{seo.get('description_pl', '')}\n\n"
+            f"📍 ROZDZIAŁY:\n{chapters_body}"
+        )
+
+        body = {
+            "snippet": {
+                "title":       seo.get("title_pl", "")[:100],
+                "description": full_description[:5000],
+                "tags":        (seo.get("tags_pl") or [])[:500],
+                "categoryId":  "10",  # Music
+                "defaultLanguage": "pl",
+            },
+            "status": {
+                "privacyStatus":      "public",
+                "selfDeclaredMadeForKids": False,
+            },
+        }
+
+        try:
+            media = MediaFileUpload(
+                mix.full_video_path,
+                mimetype="video/mp4",
+                resumable=True,
+                chunksize=10 * 1024 * 1024,  # 10 MB chunks
+            )
+            request = youtube.videos().insert(
+                part="snippet,status",
+                body=body,
+                media_body=media,
+            )
+            response = _execute_resumable_upload(request)
+            video_id = response.get("id", "")
+            results.append(UploadResult(
+                mix_id=mix_id,
+                upload_id=str(uuid.uuid4()),
+                platform="youtube",
+                content_type=ContentType.FULL_MIX.value,
+                platform_video_id=video_id,
+                platform_video_url=f"https://www.youtube.com/watch?v={video_id}",
+                status="uploaded",
+            ))
+            log.info("YouTube full mix uploaded: https://youtu.be/%s", video_id)
+        except Exception as exc:
+            log.error("YouTube full mix upload failed: %s", exc)
+            results.append(UploadResult(
+                mix_id=mix_id, upload_id=str(uuid.uuid4()),
+                platform="youtube", content_type=ContentType.FULL_MIX.value,
+                status="failed", error=str(exc),
+            ))
+
+    # ── Upload YouTube Shorts (9:16) ──────────────────────────────────────
+    shorts_titles = seo.get("shorts_titles_pl") or []
+    for i, short in enumerate(viral_shorts):
+        video_path = short.get("video_path", "")
+        if not video_path or not os.path.exists(video_path):
+            continue
+
+        title = (shorts_titles[i] if i < len(shorts_titles) else seo.get("title_pl", ""))[:100]
+
+        short_body = {
+            "snippet": {
+                "title":       title,
+                "description": seo.get("description_pl", "")[:5000],
+                "tags":        (seo.get("tags_pl") or [])[:500],
+                "categoryId":  "10",
+                "defaultLanguage": "pl",
+            },
+            "status": {
+                "privacyStatus":      "public",
+                "selfDeclaredMadeForKids": False,
+            },
+        }
+
+        try:
+            media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True)
+            request = youtube.videos().insert(
+                part="snippet,status",
+                body=short_body,
+                media_body=media,
+            )
+            resp     = _execute_resumable_upload(request)
+            video_id = resp.get("id", "")
+            results.append(UploadResult(
+                mix_id=mix_id, upload_id=str(uuid.uuid4()),
+                platform="youtube", content_type=ContentType.SHORT.value,
+                platform_video_id=video_id,
+                platform_video_url=f"https://www.youtube.com/shorts/{video_id}",
+                status="uploaded",
+            ))
+            log.info("YouTube Short #%d uploaded: https://youtube.com/shorts/%s", i + 1, video_id)
+        except Exception as exc:
+            log.error("YouTube Short #%d failed: %s", i + 1, exc)
+            results.append(UploadResult(
+                mix_id=mix_id, upload_id=str(uuid.uuid4()),
+                platform="youtube", content_type=ContentType.SHORT.value,
+                status="failed", error=str(exc),
+            ))
+
+    return results
+
+
+def _execute_resumable_upload(request) -> dict:
+    """Drive a resumable YouTube upload to completion."""
+    response = None
+    while response is None:
+        _, response = request.next_chunk()
+    return response
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. TikTok Upload Agent
+# ─────────────────────────────────────────────────────────────────────────────
+
+@retry_tiktok_api
+def upload_to_tiktok_agent(
+    mix_id: str,
+    seo: dict,
+    viral_shorts: list[dict],
+) -> list[UploadResult]:
+    """
+    Uploads viral shorts to TikTok via the TikTok Content Posting API v2.
+    Only 9:16 short clips are uploaded — TikTok has a 10-minute limit.
+    """
+    results: list[UploadResult] = []
+    shorts_titles = seo.get("shorts_titles_pl") or []
+    tags_pl       = " ".join(seo.get("tags_pl") or [])[:150]
+
+    for i, short in enumerate(viral_shorts):
+        video_path = short.get("video_path", "")
+        if not video_path or not os.path.exists(video_path):
+            continue
+
+        title = (shorts_titles[i] if i < len(shorts_titles) else "")[:80]
+        caption = f"{title}\n{tags_pl}"
+
+        try:
+            video_id = _tiktok_upload_video(
+                video_path=video_path,
+                caption=caption,
+                api_key=settings.tiktok_api_key,
+            )
+            results.append(UploadResult(
+                mix_id=mix_id, upload_id=str(uuid.uuid4()),
+                platform="tiktok", content_type=ContentType.SHORT.value,
+                platform_video_id=video_id,
+                platform_video_url=f"https://www.tiktok.com/@nebula/video/{video_id}",
+                status="uploaded",
+            ))
+            log.info("TikTok Short #%d uploaded: video_id=%s", i + 1, video_id)
+        except Exception as exc:
+            log.error("TikTok Short #%d failed: %s", i + 1, exc)
+            results.append(UploadResult(
+                mix_id=mix_id, upload_id=str(uuid.uuid4()),
+                platform="tiktok", content_type=ContentType.SHORT.value,
+                status="failed", error=str(exc),
+            ))
+
+    return results
+
+
+@retry_tiktok_api
+def _tiktok_upload_video(video_path: str, caption: str, api_key: str) -> str:
+    """
+    TikTok Content Posting API v2 — direct post upload flow.
+    Returns the TikTok publish_id on success.
+    """
+    file_size = os.path.getsize(video_path)
+
+    # Step 1: Initialise upload
+    init_resp = httpx.post(
+        "https://open.tiktokapis.com/v2/post/publish/video/init/",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json; charset=UTF-8",
+        },
+        json={
+            "post_info": {
+                "title":          caption[:150],
+                "privacy_level":  "PUBLIC_TO_EVERYONE",
+                "disable_comment": False,
+                "disable_duet":    False,
+                "disable_stitch":  False,
+            },
+            "source_info": {
+                "source":     "FILE_UPLOAD",
+                "video_size": file_size,
+                "chunk_size": file_size,
+                "total_chunk_count": 1,
+            },
+        },
+        timeout=30.0,
+    )
+    init_resp.raise_for_status()
+    init_data   = init_resp.json()["data"]
+    upload_url  = init_data["upload_url"]
+    publish_id  = init_data["publish_id"]
+
+    # Step 2: Upload the video file
+    with open(video_path, "rb") as f:
+        video_data = f.read()
+
+    upload_resp = httpx.put(
+        upload_url,
+        content=video_data,
+        headers={
+            "Content-Type":  "video/mp4",
+            "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
+        },
+        timeout=300.0,
+    )
+    upload_resp.raise_for_status()
+
+    # Step 3: Poll publish status
+    for _ in range(30):
+        status_resp = httpx.post(
+            "https://open.tiktokapis.com/v2/post/publish/status/fetch/",
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json; charset=UTF-8"},
+            json={"publish_id": publish_id},
+            timeout=30.0,
+        )
+        status_resp.raise_for_status()
+        status = status_resp.json()["data"]["status"]
+        if status == "PUBLISH_COMPLETE":
+            return publish_id
+        if status in ("FAILED", "PUBLISH_FAILED"):
+            raise RuntimeError(f"TikTok publish failed: {status_resp.json()}")
+        time.sleep(10)
+
+    raise TimeoutError(f"TikTok publish timed out for publish_id={publish_id}")
