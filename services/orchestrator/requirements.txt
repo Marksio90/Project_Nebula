@@ -3,23 +3,23 @@ celery==5.4.0
 redis[hiredis]==5.2.1
 crewai==0.95.0
 crewai-tools==0.20.0
-openai==1.59.5
+openai>=1.59.5
 # Replicate — default audio provider (MusicGen Stereo Large)
-replicate==1.0.4
-# Gemini: legacy SDK (Lyria 3 fallback) + new client (Imagen 3, Veo 2 fallback)
-google-generativeai==0.8.3
-google-genai==1.10.0
+replicate>=0.34.0
+# Gemini new SDK — optional fallback (IMAGE_PROVIDER=gemini / VIDEO_PROVIDER=gemini)
+# NOTE: do NOT add google-generativeai here — it conflicts with google-genai
+google-genai>=1.10.0
 # YouTube Data API v3
-google-api-python-client==2.155.0
-google-auth-oauthlib==1.2.1
-google-auth-httplib2==0.2.0
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
 # YAML config loading (crew.py reads agents.yaml / tasks.yaml)
-pyyaml==6.0.2
-sqlalchemy[asyncio]==2.0.37
-asyncpg==0.30.0
-psycopg2-binary==2.9.10
-pydantic==2.10.4
-pydantic-settings==2.7.1
-tenacity==9.0.0
-httpx==0.28.1
-python-dateutil==2.9.0
+pyyaml>=6.0
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.9
+pydantic>=2.7.0,<3.0
+pydantic-settings>=2.4.0
+tenacity>=9.0.0
+httpx>=0.27.0
+python-dateutil>=2.9.0

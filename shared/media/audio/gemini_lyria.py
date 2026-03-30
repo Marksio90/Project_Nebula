@@ -46,11 +46,11 @@ class GeminiLyriaProvider(AudioGenerator):
         duration_s: int = 30,
         output_path: str = "",
     ) -> GeneratedAudio:
-        import google.generativeai as genai
-        from google.generativeai import types
+        # Uses google-genai (new unified SDK) — no google-generativeai needed
+        from google import genai as google_genai
+        from google.genai import types
 
-        genai.configure(api_key=self._api_key)
-        model = genai.GenerativeModel(model_name="lyria-realtime-exp")
+        client = google_genai.Client(api_key=self._api_key)
 
         full_prompt = (
             f"{prompt}\n\n"
@@ -58,9 +58,10 @@ class GeminiLyriaProvider(AudioGenerator):
             f"stereo, 44100 Hz sample rate, high quality production."
         )
 
-        response = model.generate_content(
-            full_prompt,
-            generation_config=types.GenerationConfig(
+        response = client.models.generate_content(
+            model="lyria-realtime-exp",
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
                 response_mime_type="audio/wav",
             ),
         )
