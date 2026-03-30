@@ -132,8 +132,8 @@ services:
   # --------------------------------------------------------------------------
   api_gateway:
     build:
-      context: ./services/api_gateway
-      dockerfile: Dockerfile
+      context: .                              # Repo root — shared/ is accessible
+      dockerfile: services/api_gateway/Dockerfile
     container_name: nebula_api_gateway
     restart: unless-stopped
     networks:
@@ -164,8 +164,8 @@ services:
   # --------------------------------------------------------------------------
   orchestrator:
     build:
-      context: ./services/orchestrator
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
     container_name: nebula_orchestrator
     restart: unless-stopped
     networks:
@@ -199,8 +199,8 @@ services:
   # --------------------------------------------------------------------------
   dsp_worker:
     build:
-      context: ./services/dsp_worker
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/dsp_worker/Dockerfile
     container_name: nebula_dsp_worker
     restart: unless-stopped
     networks:
@@ -242,8 +242,8 @@ services:
   # --------------------------------------------------------------------------
   video_worker:
     build:
-      context: ./services/video_worker
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/video_worker/Dockerfile
     container_name: nebula_video_worker
     restart: unless-stopped
     networks:

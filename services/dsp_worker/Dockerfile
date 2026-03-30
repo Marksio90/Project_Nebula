@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-COPY ../../shared /app/shared
-COPY . /app/services/dsp_worker
+COPY shared /app/shared
+COPY services/dsp_worker /app/services/dsp_worker
 
 ENV PYTHONPATH=/app

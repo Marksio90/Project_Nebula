@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-COPY ../../shared /app/shared
-COPY . /app/services/orchestrator
+COPY shared /app/shared
+COPY services/orchestrator /app/services/orchestrator
 
 ENV PYTHONPATH=/app
