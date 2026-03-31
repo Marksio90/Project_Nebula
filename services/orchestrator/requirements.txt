@@ -1,34 +1,15 @@
 alembic==1.14.1          # used by db_migrate service
 celery==5.4.0
 redis[hiredis]==5.2.1
-# crewai-tools 1.x pins crewai==1.x exactly — both must be >=1.0.0 together
-crewai>=1.0.0
-crewai-tools>=1.0.0
+# crewai-tools NOT needed — BaseTool comes from crewai core package.
+# Our tools (BpmRegistryTool, YoutubeAnalyticsTool) are custom implementations.
+# crewai-tools 1.x.y would hard-pin crewai==1.x.y causing ResolutionImpossible.
+crewai==0.95.0
 openai>=1.59.5
-# Replicate — default audio provider (MusicGen Stereo Large)
+# Replicate — default audio provider (MusicGen Stereo Large, ~$0.008/stem)
 replicate>=0.34.0
-# Gemini new SDK — optional fallback (IMAGE_PROVIDER=gemini / VIDEO_PROVIDER=gemini)
-# NOTE: do NOT add google-generativeai here — it conflicts with google-genai
-google-genai>=1.10.0
-# YouTube Data API v3
-google-api-python-client>=2.100.0
-google-auth-oauthlib>=1.2.0
-google-auth-httplib2>=0.2.0
-# YAML config loading (crew.py reads agents.yaml / tasks.yaml)
-pyyaml>=6.0
-sqlalchemy[asyncio]>=2.0.30
-asyncpg>=0.29.0
-psycopg2-binary>=2.9.9
-pydantic>=2.7.0,<3.0
-pydantic-settings>=2.4.0
-tenacity>=9.0.0
-httpx>=0.27.0
-python-dateutil>=2.9.0
-
-# Replicate — default audio provider (MusicGen Stereo Large)
-replicate>=0.34.0
-# Gemini new SDK — optional fallback (IMAGE_PROVIDER=gemini / VIDEO_PROVIDER=gemini)
-# NOTE: do NOT add google-generativeai here — it conflicts with google-genai
+# Gemini new SDK — optional fallback (set *_PROVIDER=gemini to activate)
+# NOTE: do NOT add google-generativeai — it conflicts with google-genai namespace
 google-genai>=1.10.0
 # YouTube Data API v3
 google-api-python-client>=2.100.0
