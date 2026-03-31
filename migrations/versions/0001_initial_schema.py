@@ -18,34 +18,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # ── Custom ENUM types ─────────────────────────────────────────────────────
-    mix_status = sa.Enum(
-        "pending", "strategising", "prompt_gen", "fetching_stems", "fetching_visuals",
-        "stitching", "mastering", "qa_audio", "rendering", "slicing", "qa_video",
-        "uploading", "complete", "failed",
-        name="mix_status",
-    )
-    stem_status    = sa.Enum("pending", "generating", "ready", "failed", name="stem_status")
-    visual_type    = sa.Enum(
-        "background_image", "video_loop", "thumbnail", "short_background", "short_thumbnail",
-        name="visual_type",
-    )
-    visual_status  = sa.Enum("pending", "generating", "ready", "failed", name="visual_status")
-    platform_enum  = sa.Enum("youtube", "tiktok", name="platform")
-    content_type   = sa.Enum("full_mix", "short", name="content_type")
-    upload_status  = sa.Enum("pending", "uploading", "uploaded", "failed", name="upload_status")
-    short_upload_status = sa.Enum("pending", "uploading", "uploaded", "failed", name="short_upload_status")
-
-    for e in (mix_status, stem_status, visual_type, visual_status,
-              platform_enum, content_type, upload_status, short_upload_status):
-        e.create(op.get_bind(), checkfirst=True)
-
     # ── mixes ─────────────────────────────────────────────────────────────────
     op.create_table(
         "mixes",
         sa.Column("id", UUID(as_uuid=False), primary_key=True),
         sa.Column("celery_task_id", sa.String(255), nullable=True),
-        sa.Column("status", pgENUM(name="mix_status", create_type=False), nullable=False, server_default="pending"),
+        sa.Column("status", pgENUM(
+            "pending", "strategising", "prompt_gen", "fetching_stems", "fetching_visuals",
+            "stitching", "mastering", "qa_audio", "rendering", "slicing", "qa_video",
+            "uploading", "complete", "failed",
+            name="mix_status",
+        ), nullable=False, server_default="pending"),
         sa.Column("requested_duration_minutes", sa.Integer, nullable=False, server_default="45"),
         sa.Column("actual_duration_seconds", sa.Float, nullable=True),
         sa.Column("style_hint", sa.Text, nullable=True),
@@ -75,7 +58,10 @@ def upgrade() -> None:
         sa.Column("position", sa.Integer, nullable=False),
         sa.Column("gemini_prompt", sa.Text, nullable=False),
         sa.Column("file_path", sa.Text, nullable=True),
-        sa.Column("status", pgENUM(name="stem_status", create_type=False), nullable=False, server_default="pending"),
+        sa.Column("status", pgENUM(
+            "pending", "generating", "ready", "failed",
+            name="stem_status",
+        ), nullable=False, server_default="pending"),
         sa.Column("error_message", sa.Text, nullable=True),
         sa.Column("bpm_detected", sa.Float, nullable=True),
         sa.Column("beat_offset_samples", sa.BigInteger, nullable=True),
@@ -95,11 +81,17 @@ def upgrade() -> None:
         "visuals",
         sa.Column("id", UUID(as_uuid=False), primary_key=True),
         sa.Column("mix_id", UUID(as_uuid=False), sa.ForeignKey("mixes.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("visual_type", pgENUM(name="visual_type", create_type=False), nullable=False),
+        sa.Column("visual_type", pgENUM(
+            "background_image", "video_loop", "thumbnail", "short_background", "short_thumbnail",
+            name="visual_type",
+        ), nullable=False),
         sa.Column("aspect_ratio", sa.String(8), nullable=False, server_default="16:9"),
         sa.Column("gemini_prompt", sa.Text, nullable=False),
         sa.Column("file_path", sa.Text, nullable=True),
-        sa.Column("status", pgENUM(name="visual_status", create_type=False), nullable=False, server_default="pending"),
+        sa.Column("status", pgENUM(
+            "pending", "generating", "ready", "failed",
+            name="visual_status",
+        ), nullable=False, server_default="pending"),
         sa.Column("error_message", sa.Text, nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
@@ -116,7 +108,10 @@ def upgrade() -> None:
         sa.Column("duration_seconds", sa.Float, nullable=False, server_default="60.0"),
         sa.Column("rms_db", sa.Float, nullable=False),
         sa.Column("video_path", sa.Text, nullable=True),
-        sa.Column("upload_status", pgENUM(name="short_upload_status", create_type=False), nullable=False, server_default="pending"),
+        sa.Column("upload_status", pgENUM(
+            "pending", "uploading", "uploaded", "failed",
+            name="short_upload_status",
+        ), nullable=False, server_default="pending"),
         sa.Column("error_message", sa.Text, nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
@@ -129,9 +124,18 @@ def upgrade() -> None:
         sa.Column("id", UUID(as_uuid=False), primary_key=True),
         sa.Column("mix_id", UUID(as_uuid=False), sa.ForeignKey("mixes.id", ondelete="CASCADE"), nullable=False),
         sa.Column("viral_short_id", UUID(as_uuid=False), sa.ForeignKey("viral_shorts.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("platform", pgENUM(name="platform", create_type=False), nullable=False),
-        sa.Column("content_type", pgENUM(name="content_type", create_type=False), nullable=False),
-        sa.Column("upload_status", pgENUM(name="upload_status", create_type=False), nullable=False, server_default="pending"),
+        sa.Column("platform", pgENUM(
+            "youtube", "tiktok",
+            name="platform",
+        ), nullable=False),
+        sa.Column("content_type", pgENUM(
+            "full_mix", "short",
+            name="content_type",
+        ), nullable=False),
+        sa.Column("upload_status", pgENUM(
+            "pending", "uploading", "uploaded", "failed",
+            name="upload_status",
+        ), nullable=False, server_default="pending"),
         sa.Column("title_pl", sa.Text, nullable=True),
         sa.Column("description_pl", sa.Text, nullable=True),
         sa.Column("tags_pl", sa.JSON, nullable=True),
@@ -174,4 +178,4 @@ def downgrade() -> None:
 
     for name in ("short_upload_status", "upload_status", "content_type", "platform",
                  "visual_status", "visual_type", "stem_status", "mix_status"):
-        sa.Enum(name=name).drop(op.get_bind(), checkfirst=True)
+        pgENUM(name=name).drop(op.get_bind(), checkfirst=True)
