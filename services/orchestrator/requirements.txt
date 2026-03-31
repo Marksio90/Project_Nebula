@@ -2,7 +2,7 @@ alembic==1.14.1          # used by db_migrate service
 celery==5.4.0
 redis[hiredis]==5.2.1
 crewai==0.95.0
-crewai-tools==0.20.0
+crewai-tools>=1.0.0      # 0.20.0 never existed; 1.x is the current stable line
 openai>=1.59.5
 # Replicate — default audio provider (MusicGen Stereo Large)
 replicate>=0.34.0
