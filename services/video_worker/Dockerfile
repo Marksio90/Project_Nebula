@@ -24,5 +24,6 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY shared /app/shared
 COPY services/video_worker /app/services/video_worker
+COPY tests /app/tests
 
 ENV PYTHONPATH=/app

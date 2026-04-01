@@ -20,3 +20,7 @@ ffmpeg-python==0.2.0
 # File I/O
 aiofiles==24.1.0
 httpx==0.28.1
+
+# Testing
+pytest==8.3.5
+pytest-timeout==2.4.0
