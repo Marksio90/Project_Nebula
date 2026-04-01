@@ -37,6 +37,18 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _pg_enum(enum_cls: type, name: str) -> Enum:
+    """
+    SQLAlchemy Enum that stores .value (e.g. 'pending') not .name ('PENDING').
+    By default SQLAlchemy uses the Python attribute name; values_callable
+    overrides this to use the lowercase string value that matches the
+    PostgreSQL native ENUM type created by our Alembic migration.
+    """
+    return Enum(enum_cls, name=name, values_callable=lambda x: [e.value for e in x])
+
+
 # ── Base ──────────────────────────────────────────────────────────────────────
 
 class Base(DeclarativeBase):
@@ -132,7 +144,7 @@ class Mix(TimestampMixin, Base):
     )
     celery_task_id: Mapped[str | None] = mapped_column(String(255), index=True)
     status: Mapped[MixStatus] = mapped_column(
-        Enum(MixStatus, name="mix_status"), default=MixStatus.PENDING, index=True
+        _pg_enum(MixStatus, "mix_status"), default=MixStatus.PENDING, index=True
     )
 
     # ── CSO-determined parameters ──────────────────────────────────────────
@@ -189,7 +201,7 @@ class Stem(TimestampMixin, Base):
     gemini_prompt:  Mapped[str]        = mapped_column(Text, nullable=False)
     file_path:      Mapped[str | None] = mapped_column(Text)
     status:         Mapped[StemStatus] = mapped_column(
-        Enum(StemStatus, name="stem_status"), default=StemStatus.PENDING, index=True
+        _pg_enum(StemStatus, "stem_status"), default=StemStatus.PENDING, index=True
     )
     error_message:  Mapped[str | None] = mapped_column(Text)
 
@@ -228,14 +240,14 @@ class Visual(TimestampMixin, Base):
         UUID(as_uuid=False), ForeignKey("mixes.id", ondelete="CASCADE"), nullable=False, index=True
     )
     visual_type: Mapped[VisualType] = mapped_column(
-        Enum(VisualType, name="visual_type"), nullable=False
+        _pg_enum(VisualType, "visual_type"), nullable=False
     )
     aspect_ratio: Mapped[str] = mapped_column(String(8), default="16:9")  # "16:9" | "9:16"
 
     gemini_prompt: Mapped[str]        = mapped_column(Text, nullable=False)
     file_path:     Mapped[str | None] = mapped_column(Text)
     status:        Mapped[VisualStatus] = mapped_column(
-        Enum(VisualStatus, name="visual_status"), default=VisualStatus.PENDING
+        _pg_enum(VisualStatus, "visual_status"), default=VisualStatus.PENDING
     )
     error_message: Mapped[str | None] = mapped_column(Text)
 
@@ -266,7 +278,7 @@ class ViralShort(TimestampMixin, Base):
     rms_db:            Mapped[float]       = mapped_column(Float, nullable=False)
     video_path:        Mapped[str | None]  = mapped_column(Text)
     upload_status:     Mapped[UploadStatus] = mapped_column(
-        Enum(UploadStatus, name="short_upload_status"), default=UploadStatus.PENDING
+        _pg_enum(UploadStatus, "short_upload_status"), default=UploadStatus.PENDING
     )
     error_message:     Mapped[str | None]  = mapped_column(Text)
 
@@ -295,9 +307,9 @@ class PlatformUpload(TimestampMixin, Base):
     viral_short_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False), ForeignKey("viral_shorts.id", ondelete="SET NULL"), nullable=True
     )
-    platform:      Mapped[Platform]     = mapped_column(Enum(Platform,     name="platform"),      nullable=False)
-    content_type:  Mapped[ContentType]  = mapped_column(Enum(ContentType,  name="content_type"),  nullable=False)
-    upload_status: Mapped[UploadStatus] = mapped_column(Enum(UploadStatus, name="upload_status"), default=UploadStatus.PENDING, index=True)
+    platform:      Mapped[Platform]     = mapped_column(_pg_enum(Platform,     "platform"),      nullable=False)
+    content_type:  Mapped[ContentType]  = mapped_column(_pg_enum(ContentType,  "content_type"),  nullable=False)
+    upload_status: Mapped[UploadStatus] = mapped_column(_pg_enum(UploadStatus, "upload_status"), default=UploadStatus.PENDING, index=True)
 
     # ── Polish SEO metadata (FRONTEND LOCALIZATION) ────────────────────────
     title_pl:       Mapped[str | None]  = mapped_column(Text)   # Viral-optimised Polish title
