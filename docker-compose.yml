@@ -70,7 +70,7 @@ x-storage-volumes-secrets: &storage-volumes-secrets
   - ./secrets:/secrets:ro
 
 x-worker-base: &worker-base
-  restart: unless-stopped
+  restart: always
   networks:
     - nebula_internal
   depends_on:
@@ -92,7 +92,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: nebula_postgres
-    restart: unless-stopped
+    restart: always
     networks:
       - nebula_internal
     volumes:
@@ -117,7 +117,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: nebula_redis
-    restart: unless-stopped
+    restart: always
     networks:
       - nebula_internal
     volumes:
@@ -134,15 +134,18 @@ services:
 
   # --------------------------------------------------------------------------
   # DB MIGRATE — one-shot Alembic runner; exits 0 on success
-  # All application services depend on this completing successfully before
-  # they start, guaranteeing the schema is always up-to-date.
+  #
+  # NOTE: This container is INTENTIONALLY stopped after it runs.
+  # "Stopped" in Docker Desktop is normal — it means the migration
+  # completed successfully (exit code 0). restart: "no" is correct.
+  # All other services depend on it completing before they start.
   # --------------------------------------------------------------------------
   db_migrate:
     build:
       context: .
       dockerfile: services/orchestrator/Dockerfile   # reuse orchestrator image (has alembic + psycopg2)
     container_name: nebula_db_migrate
-    restart: "no"                                    # run once and exit
+    restart: "no"                                    # ← intentional: run once and exit cleanly
     networks:
       - nebula_internal
     environment:
@@ -164,7 +167,7 @@ services:
       context: .                              # Repo root — shared/ is accessible
       dockerfile: services/api_gateway/Dockerfile
     container_name: nebula_api_gateway
-    restart: unless-stopped
+    restart: always
     networks:
       - nebula_internal
       - nebula_public
@@ -183,6 +186,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 15s
 
   # --------------------------------------------------------------------------
   # ORCHESTRATOR — CrewAI multi-agent crew + lightweight Celery worker
@@ -194,7 +198,7 @@ services:
       context: .
       dockerfile: services/orchestrator/Dockerfile
     container_name: nebula_orchestrator
-    restart: unless-stopped
+    restart: always
     networks:
       - nebula_internal
     volumes: *storage-volumes-secrets
@@ -227,7 +231,7 @@ services:
       context: .
       dockerfile: services/dsp_worker/Dockerfile
     container_name: nebula_dsp_worker
-    restart: unless-stopped
+    restart: always
     networks:
       - nebula_internal
     volumes: *storage-volumes
@@ -269,7 +273,7 @@ services:
       context: .
       dockerfile: services/video_worker/Dockerfile
     container_name: nebula_video_worker
-    restart: unless-stopped
+    restart: always
     networks:
       - nebula_internal
     volumes: *storage-volumes
@@ -306,7 +310,7 @@ services:
   flower:
     image: mher/flower:2.0
     container_name: nebula_flower
-    restart: unless-stopped
+    restart: always
     networks:
       - nebula_internal
       - nebula_public
@@ -314,10 +318,17 @@ services:
       - "127.0.0.1:5555:5555"
     environment:
       CELERY_BROKER_URL: redis://redis:6379/0
-      FLOWER_BASIC_AUTH: ${FLOWER_USER:-admin}:${FLOWER_PASSWORD}
+      FLOWER_BASIC_AUTH: ${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-nebula}
       FLOWER_PERSISTENT: "True"
       FLOWER_DB: /data/flower.db
     volumes:
       - ./data/flower:/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5555/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
