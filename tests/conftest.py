@@ -1,13 +1,12 @@
 """
-tests/fixtures/conftest.py
+tests/conftest.py
 Root pytest conftest — adds the repo root to sys.path so that
 `from services.dsp_worker.audio.beat_aligner import ...` works
-in unit tests without installing the packages.
+in all unit and integration tests without installing packages.
 """
 import sys
 from pathlib import Path
 
-# Repo root
-_ROOT = Path(__file__).parent.parent.parent
+_ROOT = Path(__file__).parent.parent  # tests/ → Project_Nebula/
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))

@@ -5,7 +5,7 @@ FastAPI HTTP entry-point for Project Nebula.
 
 Endpoints:
   POST /mixes/generate   — Enqueue a full autonomous mix pipeline
-  GET  /mixes/{mix_id}   — Poll mix status
+  GET  /mixes/{mix_id}   — Poll mix status (source of truth: DB)
   GET  /health           — Docker healthcheck probe
 ─────────────────────────────────────────────────────────────────────────────
 """
@@ -17,8 +17,11 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from shared.config import get_settings
+from shared.db.models import Mix
+from shared.db.session import get_db
 from shared.tasks.celery_app import celery_app
 
 log = logging.getLogger("nebula.api_gateway")
@@ -125,16 +128,25 @@ async def generate_mix(request: GenerateMixRequest) -> GenerateMixResponse:
     summary="Poll mix status by mix_id",
 )
 async def get_mix_status(mix_id: UUID) -> MixStatusResponse:
-    # In production: look up task_id from the DB using mix_id.
-    # For now, we accept task_id as the same as mix_id for simplicity.
-    result = celery_app.AsyncResult(str(mix_id))
-    if result is None:
-        raise HTTPException(status_code=404, detail="Mix not found.")
+    async with get_db() as session:
+        mix = await session.get(Mix, str(mix_id))
+
+    if mix is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Mix {mix_id} not found. It may still be queued.",
+        )
+
+    # Enrich with live Celery task state when available
+    celery_state: str | None = None
+    if mix.celery_task_id:
+        celery_state = celery_app.AsyncResult(mix.celery_task_id).state
+
     return MixStatusResponse(
         mix_id=mix_id,
-        task_id=result.id,
-        state=result.state,
-        info=result.info if isinstance(result.info, dict) else None,
+        task_id=mix.celery_task_id or "",
+        state=mix.status.value,
+        info={"celery_state": celery_state} if celery_state else None,
     )
 
 

@@ -82,6 +82,9 @@ def create_celery_app() -> Celery:
         task_default_exchange="nebula",
         task_default_routing_key="orchestration",
 
+        # Suppress CPendingDeprecationWarning in Celery 5.x (default in 6.0)
+        broker_connection_retry_on_startup=True,
+
         # Result expiry — 48 hours is enough for pipeline state
         result_expires=172_800,
 
