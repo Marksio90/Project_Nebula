@@ -69,7 +69,7 @@ class TestAudioPromptBatch:
         strategy = CSOStrategy(
             mix_id="m1", bpm=174.0, subgenre="Neurofunk",
             key_signature="D minor", style_description="Dark",
-            transition_arc="Neurofunk → Liquid", stem_count=3,
+            transition_arc="Neurofunk → Liquid", stem_count=90,
             requested_duration_minutes=45,
         )
         batch = AudioPromptBatch(
