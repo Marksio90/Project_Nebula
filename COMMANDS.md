@@ -164,3 +164,49 @@ docker exec nebula_orchestrator redis-cli -h redis ping
 # Sprawdź połączenie z bazą
 docker exec nebula_orchestrator python -c "from shared.db.session import _sync_engine; print('DB OK')"
 ```
+
+---
+
+## Naprawa błędu: `password authentication failed for user "Marksio"`
+
+Błąd oznacza, że plik `.env` ma ustawione `POSTGRES_USER` na nazwę użytkownika Windows
+zamiast `nebula`. Baza danych PostgreSQL nie zna użytkownika `Marksio`.
+
+**Krok 1 — Sprawdź plik `.env`** (otwórz w notatniku lub VSCode):
+
+```powershell
+notepad .env
+```
+
+Upewnij się, że masz **dokładnie takie wartości**:
+
+```env
+POSTGRES_USER=nebula
+POSTGRES_PASSWORD=nebula_secret
+POSTGRES_DB=nebula_db
+```
+
+> Jeśli plik `.env` nie istnieje — skopiuj `.env.example` do `.env` i uzupełnij klucze API.
+
+**Krok 2 — Sprawdź czy hasło zgadza się z wolumenem Postgres**
+
+Jeśli Postgres był już zainicjalizowany z innym hasłem, samo poprawienie `.env` nie wystarczy.
+Zresetuj wolumen bazy (UWAGA: usuwa wszystkie dane miksu!):
+
+```powershell
+docker compose down -v
+docker compose up -d
+```
+
+**Krok 3 — Weryfikacja po naprawie**
+
+```powershell
+docker compose logs -f db_migrate
+```
+
+Poprawny wynik:
+
+```
+[migrate] Waiting for postgres...
+[migrate] Schema up-to-date.
+```
