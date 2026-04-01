@@ -29,5 +29,6 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY shared /app/shared
 COPY services/dsp_worker /app/services/dsp_worker
+COPY tests /app/tests
 
 ENV PYTHONPATH=/app

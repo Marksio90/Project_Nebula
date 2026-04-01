@@ -1,0 +1,24 @@
+##############################################################################
+# docker-compose.override.yml — DEV overrides
+#
+# Automatically picked up by `docker compose up` alongside docker-compose.yml.
+# Bind-mounts the tests/ directory into every worker container so that
+# `docker exec <container> python -m pytest tests/` works without rebuilding.
+#
+# Usage:
+#   docker compose up          ← picks this file up automatically
+#   docker compose up --build  ← rebuild + dev mounts
+##############################################################################
+
+services:
+  dsp_worker:
+    volumes:
+      - ./tests:/app/tests:ro
+
+  orchestrator:
+    volumes:
+      - ./tests:/app/tests:ro
+
+  video_worker:
+    volumes:
+      - ./tests:/app/tests:ro
