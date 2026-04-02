@@ -8,6 +8,7 @@ crewai==0.95.0
 openai>=1.59.5
 # Replicate — default audio provider (MusicGen Stereo Large, ~$0.008/stem)
 replicate>=0.34.0
+soundfile>=0.12.1
 # Gemini new SDK — optional fallback (set *_PROVIDER=gemini to activate)
 # NOTE: do NOT add google-generativeai — it conflicts with google-genai namespace
 google-genai>=1.10.0
