@@ -103,7 +103,7 @@ python -m pytest tests/unit/test_tasks/ -v
 docker exec nebula_dsp_worker python -m pytest tests/unit/test_audio/ -v
 
 # Wszystkie testy jednostkowe (w kontenerze orchestrator)
-docker exec nebula_orchestrator python -m pytest tests/unit/ -v -m "not dsp"
+docker exec nebula_orchestrator python -m pytest tests/unit/ -v
 
 # Testy z raportem coverage
 docker exec nebula_dsp_worker python -m pytest tests/unit/test_audio/ -v --tb=short
