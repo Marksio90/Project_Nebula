@@ -67,21 +67,41 @@ settings = get_settings()
 def _parse_crew_json(raw_output: str, schema_hint: str = "") -> dict:
     """
     Extract a JSON object from a CrewAI agent's raw string output.
-    Agents sometimes wrap JSON in markdown code blocks — strip those first.
+
+    Handles three common agent output patterns:
+      1. Bare JSON                     → parse directly
+      2. ```json\\n{...}\\n```          → strip fences, parse
+      3. Prose text + ```json\\n{...}  → extract the code block, parse
     """
+    import re
+
     text = raw_output.strip()
-    # Strip markdown code fences if present
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(
-            line for line in lines
-            if not line.strip().startswith("```")
-        ).strip()
+
+    # Pattern 1: try to parse as-is first (fast path)
     try:
         return json.loads(text)
-    except json.JSONDecodeError as exc:
-        log.error("JSON parse error in crew output (%s): %s\nRaw: %.500s", schema_hint, exc, raw_output)
-        raise ValueError(f"Agent returned invalid JSON for {schema_hint}: {exc}") from exc
+    except json.JSONDecodeError:
+        pass
+
+    # Pattern 2 & 3: extract content from any ```[json] ... ``` block
+    code_match = re.search(r"```(?:json)?\s*\n([\s\S]*?)\n```", text)
+    if code_match:
+        candidate = code_match.group(1).strip()
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    # Pattern 4: find the first { or [ and try from there
+    for i, ch in enumerate(text):
+        if ch in ("{", "["):
+            try:
+                return json.loads(text[i:])
+            except json.JSONDecodeError:
+                break
+
+    log.error("JSON parse error in crew output (%s)\nRaw: %.500s", schema_hint, raw_output)
+    raise ValueError(f"Agent returned invalid JSON for {schema_hint}")
 
 
 def _stems_dir(mix_id: str) -> Path:
