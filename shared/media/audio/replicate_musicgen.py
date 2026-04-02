@@ -24,15 +24,25 @@ from pathlib import Path
 
 import httpx
 import soundfile as sf
+import time
 
 from shared.media.base import AudioGenerator, GeneratedAudio
 from shared.utils.retry import retry_http
 
 log = logging.getLogger("nebula.media.audio.replicate")
 
-MUSICGEN_MODEL  = "facebook/musicgen-stereo-large"
-TARGET_SR       = 44_100
+# facebook/musicgen-stereo-large was deprecated on Replicate.
+# The current model is facebook/musicgen; the variant is selected via the
+# model_version input parameter.
+MUSICGEN_MODEL   = "facebook/musicgen"
+TARGET_SR        = 44_100
 DEFAULT_DURATION = 30
+
+# Replicate free-tier / low-credit accounts are limited to 6 predictions/min
+# (burst=1).  We wait this many seconds between requests to stay under the
+# limit.  At paid tier (>$5 balance) the limit is much higher but the sleep
+# is short enough to be harmless.
+_REPLICATE_REQUEST_DELAY_S = 11
 
 
 class ReplicateMusicGenProvider(AudioGenerator):
@@ -88,6 +98,11 @@ class ReplicateMusicGenProvider(AudioGenerator):
                 "top_p":                  0.0,
             },
         )
+
+        # Throttle to stay within Replicate's per-minute prediction limit.
+        # Low-credit accounts (<$5) are capped at 6/min (burst=1) — without
+        # this sleep every stem after the first would get a 429.
+        time.sleep(_REPLICATE_REQUEST_DELAY_S)
 
         # The SDK returns either a FileOutput object or a URL string
         audio_bytes = self._extract_bytes(output)
