@@ -4,18 +4,21 @@ services/api_gateway/main.py
 FastAPI HTTP entry-point for Project Nebula.
 
 Endpoints:
-  POST /mixes/generate   — Enqueue a full autonomous mix pipeline
-  GET  /mixes/{mix_id}   — Poll mix status (source of truth: DB)
-  GET  /health           — Docker healthcheck probe
+  POST /mixes/generate              — Enqueue a full autonomous mix pipeline
+  GET  /mixes/{mix_id}              — Poll mix status (source of truth: DB)
+  GET  /mixes/{mix_id}/audio/download — Stream mastered audio WAV file
+  GET  /health                      — Docker healthcheck probe
 ─────────────────────────────────────────────────────────────────────────────
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -147,6 +150,42 @@ async def get_mix_status(mix_id: UUID) -> MixStatusResponse:
         task_id=mix.celery_task_id or "",
         state=mix.status.value,
         info={"celery_state": celery_state} if celery_state else None,
+    )
+
+
+@app.get(
+    "/mixes/{mix_id}/audio/download",
+    summary="Download mastered audio for a completed mix",
+    response_class=FileResponse,
+)
+async def download_mix_audio(mix_id: UUID) -> FileResponse:
+    async with get_db() as session:
+        mix = await session.get(Mix, str(mix_id))
+
+    if mix is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Mix {mix_id} not found.",
+        )
+
+    if not mix.mastered_audio_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Mix {mix_id} has no audio yet (status: {mix.status.value}).",
+        )
+
+    if not os.path.isfile(mix.mastered_audio_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Audio file not found on disk. The mix may still be processing.",
+        )
+
+    filename = f"nebula_mix_{mix_id}.wav"
+    return FileResponse(
+        path=mix.mastered_audio_path,
+        media_type="audio/wav",
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

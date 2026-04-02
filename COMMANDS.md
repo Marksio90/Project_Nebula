@@ -74,6 +74,11 @@ Invoke-RestMethod -Uri http://localhost:8000/mixes/generate `
 
 # Sprawdź status miksu (podmień <mix_id>)
 Invoke-RestMethod http://localhost:8000/mixes/<mix_id>
+
+# Pobierz gotowy miks jako plik WAV (działa gdy status = complete)
+Invoke-WebRequest -Uri http://localhost:8000/mixes/<mix_id>/audio/download `
+  -OutFile "nebula_mix.wav"
+# Następnie otwórz nebula_mix.wav w dowolnym odtwarzaczu (Windows Media Player, VLC, itp.)
 ```
 
 ---
@@ -107,6 +112,12 @@ docker exec nebula_orchestrator python -m pytest tests/unit/ -v
 
 # Testy z raportem coverage
 docker exec nebula_dsp_worker python -m pytest tests/unit/test_audio/ -v --tb=short
+
+# Testy integracyjne (wymaga działającego stacku: docker compose up -d)
+python -m pytest tests/integration/ -v
+
+# Testy integracyjne przeciwko innemu serwerowi
+$env:API_BASE_URL="http://192.168.1.100:8000"; python -m pytest tests/integration/ -v
 ```
 
 ---
