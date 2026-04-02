@@ -90,6 +90,19 @@ def _mark_mix_failed(mix_id: str, error: str) -> None:
     _update_mix_status(mix_id, MixStatus.FAILED, error_message=error[:2000])
 
 
+_OPENAI_QUOTA_PHRASES = (
+    "exceeded your current quota",
+    "check your plan and billing",
+)
+
+
+def _is_quota_exhausted(exc: Exception) -> bool:
+    """Return True when the OpenAI account has run out of billing credits.
+    These errors are permanent — retrying wastes time and log noise."""
+    msg = str(exc).lower()
+    return any(phrase in msg for phrase in _OPENAI_QUOTA_PHRASES)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TASK 0 — Pipeline Orchestrator (entry-point)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,6 +201,9 @@ def run_cso_strategy(self, request_payload: dict) -> dict:
         )
     except Exception as exc:
         log.warning("CSO strategy error (attempt %d): %s", self.request.retries + 1, exc)
+        if _is_quota_exhausted(exc):
+            _mark_mix_failed(req.mix_id, f"OpenAI quota exhausted — add credits: {exc}")
+            raise
         try:
             raise self.retry(exc=exc, countdown=int(2 ** self.request.retries) * 15)
         except MaxRetriesExceededError:
@@ -245,6 +261,9 @@ def generate_audio_prompts(self, strategy_dict: dict) -> dict:
         batch: AudioPromptBatch = run_audio_prompt_engineer(strategy=strategy)
     except Exception as exc:
         log.warning("Audio prompt error: %s", exc)
+        if _is_quota_exhausted(exc):
+            _mark_mix_failed(strategy.mix_id, f"OpenAI quota exhausted — add credits: {exc}")
+            raise
         try:
             raise self.retry(exc=exc, countdown=int(2 ** self.request.retries) * 10)
         except MaxRetriesExceededError:
@@ -482,6 +501,9 @@ def generate_visual_prompts(self, upstream: dict) -> dict:
         )
     except Exception as exc:
         log.warning("Visual prompt error: %s", exc)
+        if _is_quota_exhausted(exc):
+            _mark_mix_failed(mix_id, f"OpenAI quota exhausted — add credits: {exc}")
+            raise
         try:
             raise self.retry(exc=exc, countdown=int(2 ** self.request.retries) * 10)
         except MaxRetriesExceededError:
@@ -734,6 +756,9 @@ def generate_polish_seo(self, upstream: dict) -> dict:
         )
     except Exception as exc:
         log.warning("SEO generation error: %s", exc)
+        if _is_quota_exhausted(exc):
+            _mark_mix_failed(mix_id, f"OpenAI quota exhausted — add credits: {exc}")
+            raise
         try:
             raise self.retry(exc=exc, countdown=int(2 ** self.request.retries) * 10)
         except MaxRetriesExceededError:
