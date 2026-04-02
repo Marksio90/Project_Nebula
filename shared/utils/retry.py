@@ -18,6 +18,7 @@ import random
 from tenacity import (
     RetryCallState,
     retry,
+    retry_if_exception,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
@@ -49,8 +50,32 @@ retry_gemini_api = retry(
 )
 
 # ── OpenAI API (GPT-4o via CrewAI) ────────────────────────────────────────────
+
+# Phrases that identify billing quota exhaustion (as opposed to transient rate
+# limits).  Quota errors are permanent until the account is topped up — there is
+# no point retrying them.
+_OPENAI_QUOTA_PHRASES = (
+    "exceeded your current quota",
+    "check your plan and billing",
+)
+
+
+def _is_transient_openai_error(exc: BaseException) -> bool:
+    """Return False for billing quota exhaustion so tenacity stops immediately."""
+    msg = str(exc).lower()
+    if any(phrase in msg for phrase in _OPENAI_QUOTA_PHRASES):
+        log.error(
+            "OpenAI billing quota exhausted — aborting retries immediately. "
+            "Add credits at https://platform.openai.com/account/billing. Error: %s",
+            exc,
+        )
+        return False
+    return True
+
+
 retry_openai_api = retry(
     reraise=True,
+    retry=retry_if_exception(_is_transient_openai_error),
     stop=stop_after_attempt(5),
     wait=wait_random_exponential(multiplier=1.5, min=2, max=60),
     before_sleep=_log_retry_attempt,
