@@ -174,7 +174,13 @@ services:
       - nebula_public
     ports:
       - "8000:8000"
-    volumes: *storage-volumes-secrets
+    volumes:
+      - nebula_stems:/mnt/stems
+      - nebula_mixes:/mnt/mixes
+      - nebula_visuals:/mnt/visuals
+      - nebula_exports:/mnt/exports
+      - ./secrets:/secrets:ro
+      - ./frontend:/app/frontend:ro           # MVP frontend dashboard
     environment:
       <<: *common-env
     depends_on:

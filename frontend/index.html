@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Project Nebula — AI Music Label</title>
+  <style>
+    /* ── Reset & Variables ──────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0a0c12;
+      --bg2:         #111420;
+      --bg3:         #181c2a;
+      --border:      #252a3d;
+      --accent:      #6c63ff;
+      --accent2:     #ff6584;
+      --green:       #00e5a0;
+      --yellow:      #ffd060;
+      --red:         #ff4d6d;
+      --text:        #e8eaf6;
+      --text2:       #8890a8;
+      --radius:      10px;
+      --font:        'Segoe UI', system-ui, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      padding: 0 0 60px;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    header {
+      background: linear-gradient(135deg, #0f1124 0%, #1a1040 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo-icon {
+      width: 38px; height: 38px;
+      background: var(--accent);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 0 20px rgba(108,99,255,0.5);
+    }
+
+    .logo-text { font-size: 20px; font-weight: 700; letter-spacing: 2px; }
+    .logo-text span { color: var(--accent); }
+
+    .header-badge {
+      margin-left: auto;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: var(--text2);
+    }
+
+    #api-status-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text2);
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+
+    #api-status-dot.online  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    #api-status-dot.offline { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+
+    /* ── Layout ─────────────────────────────────────────────────────── */
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 24px 0;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 28px;
+      align-items: start;
+    }
+
+    @media (max-width: 800px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    /* ── Cards ──────────────────────────────────────────────────────── */
+    .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text2);
+      margin-bottom: 20px;
+    }
+
+    /* ── Form ───────────────────────────────────────────────────────── */
+    .form-group { margin-bottom: 16px; }
+
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--text2);
+      margin-bottom: 6px;
+      letter-spacing: 0.5px;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      padding: 9px 12px;
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+    }
+
+    input[type=range] {
+      padding: 0;
+      border: none;
+      background: none;
+      cursor: pointer;
+    }
+
+    .range-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .range-value {
+      min-width: 60px;
+      text-align: right;
+      font-size: 14px;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 7px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+      letter-spacing: 0.5px;
+    }
+
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-primary:hover:not(:disabled) { opacity: 0.88; }
+
+    .btn-sm {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      width: auto;
+      padding: 5px 12px;
+      font-size: 12px;
+      border-radius: 5px;
+    }
+
+    .btn-download { background: var(--green);   color: #000; }
+    .btn-retry    { background: var(--bg3);      color: var(--text); border: 1px solid var(--border); }
+
+    #generate-msg {
+      margin-top: 12px;
+      font-size: 13px;
+      min-height: 20px;
+      text-align: center;
+    }
+
+    .msg-ok  { color: var(--green); }
+    .msg-err { color: var(--red); }
+
+    /* ── Stats bar ──────────────────────────────────────────────────── */
+    .stats-bar {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 18px;
+      flex: 1;
+      min-width: 100px;
+    }
+
+    .stat-value { font-size: 22px; font-weight: 700; }
+    .stat-label { font-size: 11px; color: var(--text2); margin-top: 2px; }
+
+    /* ── Mix list ───────────────────────────────────────────────────── */
+    #mix-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .mix-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      transition: border-color .2s;
+    }
+
+    .mix-card:hover { border-color: var(--accent); }
+
+    .mix-card.status-complete  { border-left: 3px solid var(--green); }
+    .mix-card.status-failed    { border-left: 3px solid var(--red); }
+    .mix-card.status-pending   { border-left: 3px solid var(--text2); }
+    .mix-card.status-active    { border-left: 3px solid var(--accent); }
+
+    .mix-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .mix-id {
+      font-family: monospace;
+      font-size: 11px;
+      color: var(--text2);
+    }
+
+    .mix-meta {
+      flex: 1;
+    }
+
+    .mix-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 3px;
+    }
+
+    .mix-subtitle {
+      font-size: 12px;
+      color: var(--text2);
+    }
+
+    .mix-actions {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      flex-shrink: 0;
+    }
+
+    /* ── Status badge ───────────────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .badge-complete  { background: rgba(0,229,160,.15); color: var(--green); }
+    .badge-failed    { background: rgba(255,77,109,.15); color: var(--red); }
+    .badge-pending   { background: rgba(136,144,168,.15); color: var(--text2); }
+    .badge-active    { background: rgba(108,99,255,.15);  color: var(--accent); }
+
+    /* ── Pipeline progress ──────────────────────────────────────────── */
+    .pipeline {
+      margin-top: 10px;
+    }
+
+    .pipeline-stages {
+      display: flex;
+      gap: 2px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .stage {
+      flex: 1;
+      height: 5px;
+      border-radius: 3px;
+      background: var(--bg3);
+      transition: background .3s;
+    }
+
+    .stage.done    { background: var(--green); }
+    .stage.current { background: var(--accent); animation: pulse 1.4s infinite; }
+    .stage.failed  { background: var(--red); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    .pipeline-label {
+      font-size: 11px;
+      color: var(--text2);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .pipeline-step-name { color: var(--accent); font-weight: 600; }
+
+    /* ── Error box ──────────────────────────────────────────────────── */
+    .error-box {
+      background: rgba(255,77,109,.08);
+      border: 1px solid rgba(255,77,109,.3);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--red);
+      margin-top: 10px;
+      word-break: break-word;
+    }
+
+    /* ── Empty state ────────────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text2);
+    }
+
+    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+    .empty-state p { font-size: 14px; }
+
+    /* ── Refresh indicator ──────────────────────────────────────────── */
+    .refresh-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .refresh-info {
+      font-size: 12px;
+      color: var(--text2);
+    }
+
+    #last-refresh { color: var(--text); }
+
+    .spinner {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Scrollbar ──────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo-icon">&#9654;</div>
+  <div class="logo-text">PROJECT <span>NEBULA</span></div>
+  <div class="header-badge">
+    <span id="api-status-dot"></span>
+    <span id="api-status-text">Connecting...</span>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Stats bar -->
+  <div class="stats-bar" style="margin-top:28px">
+    <div class="stat">
+      <div class="stat-value" id="stat-total">—</div>
+      <div class="stat-label">Total Mixes</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" id="stat-active" style="color:var(--accent)">—</div>
+      <div class="stat-label">In Progress</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" id="stat-complete" style="color:var(--green)">—</div>
+      <div class="stat-label">Completed</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" id="stat-failed" style="color:var(--red)">—</div>
+      <div class="stat-label">Failed</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+
+    <!-- ── Generate form ────────────────────────────────────────────── -->
+    <div>
+      <div class="card">
+        <div class="card-title">Generate New Mix</div>
+
+        <div class="form-group">
+          <label>Duration (minutes)</label>
+          <div class="range-row">
+            <input type="range" id="duration" min="10" max="120" value="45"
+                   oninput="document.getElementById('duration-val').textContent=this.value+' min'">
+            <span class="range-value" id="duration-val">45 min</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Style hint <span style="color:var(--text2)">(optional)</span></label>
+          <input type="text" id="style-hint" placeholder="Dark Neurofunk, Liquid DnB, Jump Up..." maxlength="256" />
+        </div>
+
+        <div class="form-group">
+          <label>Force BPM <span style="color:var(--text2)">(optional, 60-220)</span></label>
+          <input type="number" id="force-bpm" placeholder="e.g. 174" min="60" max="220" />
+        </div>
+
+        <button class="btn btn-primary" id="generate-btn" onclick="generateMix()">
+          &#9654; Generate Mix
+        </button>
+
+        <div id="generate-msg"></div>
+      </div>
+
+      <!-- Quick help -->
+      <div class="card" style="margin-top:16px">
+        <div class="card-title">Pipeline stages</div>
+        <div style="display:flex; flex-direction:column; gap:7px">
+          <div id="stage-legend"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Mix dashboard ─────────────────────────────────────────────── -->
+    <div>
+      <div class="refresh-row">
+        <div class="card-title" style="margin-bottom:0">Active &amp; Recent Mixes</div>
+        <div class="refresh-info">
+          <span class="spinner" id="spinner" style="display:none"></span>
+          Last update: <span id="last-refresh">—</span>
+        </div>
+      </div>
+
+      <div id="mix-list">
+        <div class="empty-state">
+          <div class="icon">&#127926;</div>
+          <p>No mixes yet. Generate your first one!</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Pipeline stage definitions ───────────────────────────────────────────────
+const STAGES = [
+  { key: 'pending',          label: 'Pending',          icon: '⏳' },
+  { key: 'strategising',     label: 'CSO Strategy',     icon: '🎯' },
+  { key: 'prompt_gen',       label: 'Prompt Generation',icon: '✍️' },
+  { key: 'fetching_stems',   label: 'Fetching Stems',   icon: '🎵' },
+  { key: 'fetching_visuals', label: 'Fetching Visuals', icon: '🖼️' },
+  { key: 'stitching',        label: 'Beat Stitching',   icon: '🔗' },
+  { key: 'mastering',        label: 'Mastering',        icon: '🎚️' },
+  { key: 'qa_audio',         label: 'QA Audio',         icon: '✅' },
+  { key: 'rendering',        label: 'Rendering Video',  icon: '🎬' },
+  { key: 'slicing',          label: 'Slicing Shorts',   icon: '✂️' },
+  { key: 'qa_video',         label: 'QA Video',         icon: '📺' },
+  { key: 'uploading',        label: 'Uploading',        icon: '☁️' },
+  { key: 'complete',         label: 'Complete',         icon: '🚀' },
+];
+
+const STAGE_INDEX = Object.fromEntries(STAGES.map((s, i) => [s.key, i]));
+
+// Build stage legend
+(function buildLegend() {
+  const el = document.getElementById('stage-legend');
+  el.innerHTML = STAGES.map((s, i) =>
+    `<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2)">
+       <span style="min-width:18px;text-align:center">${s.icon}</span>
+       <span style="color:var(--text2)">${i + 1}.</span>
+       <span>${s.label}</span>
+     </div>`
+  ).join('');
+})();
+
+// ── API helpers ──────────────────────────────────────────────────────────────
+const API = '';   // same origin
+
+async function apiFetch(path, opts = {}) {
+  const resp = await fetch(API + path, opts);
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
+
+// ── Health check ─────────────────────────────────────────────────────────────
+async function checkHealth() {
+  const dot  = document.getElementById('api-status-dot');
+  const text = document.getElementById('api-status-text');
+  try {
+    await apiFetch('/health');
+    dot.className = 'online';
+    text.textContent = 'API Online';
+  } catch {
+    dot.className = 'offline';
+    text.textContent = 'API Offline';
+  }
+}
+
+// ── Generate mix ─────────────────────────────────────────────────────────────
+async function generateMix() {
+  const btn = document.getElementById('generate-btn');
+  const msg = document.getElementById('generate-msg');
+  const duration   = parseInt(document.getElementById('duration').value, 10);
+  const styleHint  = document.getElementById('style-hint').value.trim() || null;
+  const forceBpmRaw = document.getElementById('force-bpm').value.trim();
+  const forceBpm   = forceBpmRaw ? parseInt(forceBpmRaw, 10) : null;
+
+  btn.disabled = true;
+  msg.innerHTML = '<span class="spinner"></span> Enqueuing pipeline...';
+  msg.className = '';
+
+  try {
+    const data = await apiFetch('/mixes/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requested_duration_minutes: duration,
+        style_hint: styleHint,
+        force_bpm: forceBpm,
+      }),
+    });
+    msg.innerHTML = `&#10003; Enqueued! Mix ID: <code style="font-size:11px">${data.mix_id.slice(0,8)}...</code>`;
+    msg.className = 'msg-ok';
+    document.getElementById('style-hint').value = '';
+    document.getElementById('force-bpm').value = '';
+    await refreshMixes();
+  } catch (e) {
+    msg.textContent = '✗ ' + e.message;
+    msg.className = 'msg-err';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Mix rendering helpers ─────────────────────────────────────────────────────
+function getStatusClass(status) {
+  if (status === 'complete') return 'status-complete';
+  if (status === 'failed')   return 'status-failed';
+  if (status === 'pending')  return 'status-pending';
+  return 'status-active';
+}
+
+function getBadgeClass(status) {
+  if (status === 'complete') return 'badge-complete';
+  if (status === 'failed')   return 'badge-failed';
+  if (status === 'pending')  return 'badge-pending';
+  return 'badge-active';
+}
+
+function renderPipeline(status) {
+  const currentIdx = STAGE_INDEX[status] ?? -1;
+  const isFailed   = status === 'failed';
+
+  const bars = STAGES.map((s, i) => {
+    let cls = '';
+    if (isFailed && i === currentIdx) cls = 'failed';
+    else if (i < currentIdx)          cls = 'done';
+    else if (i === currentIdx)        cls = 'current';
+    return `<div class="stage ${cls}" title="${s.label}"></div>`;
+  }).join('');
+
+  const current = STAGES[currentIdx];
+  const stepName = current
+    ? `${current.icon} ${current.label}`
+    : status;
+
+  const pct = currentIdx >= 0
+    ? Math.round((currentIdx / (STAGES.length - 1)) * 100)
+    : 0;
+
+  return `
+    <div class="pipeline">
+      <div class="pipeline-stages">${bars}</div>
+      <div class="pipeline-label">
+        <span class="pipeline-step-name">${stepName}</span>
+        <span>${pct}%</span>
+      </div>
+    </div>`;
+}
+
+function formatDuration(secs) {
+  if (!secs) return '—';
+  const m = Math.floor(secs / 60);
+  const s = Math.round(secs % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function timeAgo(isoStr) {
+  const diff = Math.floor((Date.now() - new Date(isoStr)) / 1000);
+  if (diff < 60)   return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  return Math.floor(diff / 3600) + 'h ago';
+}
+
+function renderMixCard(mix) {
+  const statusClass = getStatusClass(mix.status);
+  const badgeClass  = getBadgeClass(mix.status);
+  const shortId     = mix.mix_id.slice(0, 8);
+  const bpmStr      = mix.bpm ? `${mix.bpm} BPM` : '';
+  const subgenre    = mix.subgenre || mix.style_hint || 'Auto';
+  const duration    = mix.actual_duration_seconds
+    ? formatDuration(mix.actual_duration_seconds)
+    : `~${mix.requested_duration_minutes} min`;
+
+  let actions = '';
+  if (mix.status === 'complete') {
+    actions += `<a href="/mixes/${mix.mix_id}/audio/download">
+      <button class="btn btn-sm btn-download">&#11015; WAV</button>
+    </a>`;
+  }
+
+  const errorBox = mix.error_message
+    ? `<div class="error-box">&#9888; ${escHtml(mix.error_message)}</div>`
+    : '';
+
+  return `
+    <div class="mix-card ${statusClass}" id="card-${mix.mix_id}">
+      <div class="mix-header">
+        <div class="mix-meta">
+          <div class="mix-title">
+            ${escHtml(subgenre)}
+            ${bpmStr ? `<span style="font-size:12px;color:var(--text2);font-weight:400"> &mdash; ${bpmStr}</span>` : ''}
+          </div>
+          <div class="mix-subtitle">
+            <span class="badge ${badgeClass}">${mix.status}</span>
+            &nbsp;${duration} &nbsp;&middot;&nbsp; ${timeAgo(mix.updated_at)}
+          </div>
+          <div class="mix-id">${mix.mix_id}</div>
+        </div>
+        <div class="mix-actions">${actions}</div>
+      </div>
+      ${mix.status !== 'complete' && mix.status !== 'failed' ? renderPipeline(mix.status) : (mix.status === 'complete' ? renderPipeline('complete') : renderPipeline(mix.status))}
+      ${errorBox}
+    </div>`;
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ── Refresh mixes ─────────────────────────────────────────────────────────────
+async function refreshMixes() {
+  const spinner = document.getElementById('spinner');
+  spinner.style.display = 'inline-block';
+
+  try {
+    const mixes = await apiFetch('/mixes?limit=100');
+
+    // Stats
+    const total    = mixes.length;
+    const active   = mixes.filter(m => !['complete','failed','pending'].includes(m.status)).length;
+    const complete = mixes.filter(m => m.status === 'complete').length;
+    const failed   = mixes.filter(m => m.status === 'failed').length;
+
+    document.getElementById('stat-total').textContent    = total;
+    document.getElementById('stat-active').textContent   = active;
+    document.getElementById('stat-complete').textContent = complete;
+    document.getElementById('stat-failed').textContent   = failed;
+
+    const listEl = document.getElementById('mix-list');
+    if (mixes.length === 0) {
+      listEl.innerHTML = `
+        <div class="empty-state">
+          <div class="icon">&#127926;</div>
+          <p>No mixes yet. Generate your first one!</p>
+        </div>`;
+    } else {
+      listEl.innerHTML = mixes.map(renderMixCard).join('');
+    }
+
+    document.getElementById('last-refresh').textContent =
+      new Date().toLocaleTimeString('pl-PL');
+  } catch (e) {
+    console.error('Refresh failed:', e);
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+(async function init() {
+  await checkHealth();
+  await refreshMixes();
+
+  // Auto-refresh every 4 seconds
+  setInterval(refreshMixes, 4000);
+  // Re-check health every 30 seconds
+  setInterval(checkHealth, 30000);
+})();
+</script>
+</body>
+</html>
