@@ -67,26 +67,13 @@ if os.path.isdir(_FRONTEND_DIR):
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class GenerateMixRequest(BaseModel):
-    """Request body for autonomous mix generation."""
-    requested_duration_minutes: int = Field(
-        default=45,
-        ge=10,
-        le=120,
-        description="Desired mix duration in minutes (10–120).",
-    )
-    style_hint: str | None = Field(
-        default=None,
-        max_length=256,
-        description=(
-            "Optional style override, e.g. 'Dark Neurofunk transitioning to Liquid'. "
-            "If omitted the CSO agent decides autonomously."
-        ),
-    )
-    force_bpm: int | None = Field(
-        default=None,
-        ge=60,
-        le=220,
-        description="Optional explicit BPM. CSO uses database-driven selection when None.",
+    """Request body for autonomous mix generation.
+
+    The user provides only the genre — every other parameter (BPM, duration,
+    key, subgenre, arc) is decided autonomously by the AI agents.
+    """
+    genre: str = Field(
+        description="Music genre selected by the user. Must be a value from GET /genres.",
     )
 
 
@@ -118,6 +105,17 @@ class MixListItem(BaseModel):
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.get(
+    "/genres",
+    response_model=list[str],
+    summary="List all available music genres",
+)
+async def list_genres() -> list[str]:
+    """Returns all 120+ selectable genre names for the frontend dropdown."""
+    from shared.genres import GENRE_NAMES
+    return GENRE_NAMES
+
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def serve_frontend() -> HTMLResponse:
@@ -170,16 +168,20 @@ async def list_mixes(
     summary="Trigger autonomous mix generation pipeline",
 )
 async def generate_mix(request: GenerateMixRequest) -> GenerateMixResponse:
+    from shared.genres import GENRE_NAMES
+    if request.genre not in GENRE_NAMES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown genre '{request.genre}'. Call GET /genres for the full list.",
+        )
+
     mix_id = uuid4()
-    # Import here to avoid circular imports at module load
     from shared.tasks.definitions import orchestrate_mix_pipeline
 
     task = orchestrate_mix_pipeline.apply_async(
         kwargs={
             "mix_id": str(mix_id),
-            "requested_duration_minutes": request.requested_duration_minutes,
-            "style_hint": request.style_hint,
-            "force_bpm": request.force_bpm,
+            "genre": request.genre,
         },
         queue="orchestration",
     )

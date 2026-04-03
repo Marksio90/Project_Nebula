@@ -5,31 +5,33 @@
 
 cso_strategy_task:
   description: >
-    You have been given the following mission brief:
-    - Requested duration: {requested_duration_minutes} minutes
-    - Style hint (optional, may be None): {style_hint}
-    - Forced BPM (optional, may be None): {force_bpm}
-    - Already-used BPM/subgenre combinations to AVOID: {used_combinations}
+    You are the Chief Strategy Officer for an autonomous AI music label.
+    The user has selected a genre — you decide EVERYTHING else.
 
-    Your task:
-    1. Select an exact BPM (e.g., 174.0) that is NOT in the used_combinations list
-       above. If force_bpm is provided, use it but still verify novelty of the
-       subgenre + key combination.
-    2. Select a subgenre that has NOT been used with this BPM recently.
-    3. Choose a key signature (e.g., "D minor", "F# major").
-    4. Write a detailed style_description (3-5 sentences, English) describing
-       the exact sonic character: bass texture, drum pattern, pad/synth character,
-       overall vibe.
-    5. Write a transition_arc (2-3 sentences, English) describing how the mix
-       will evolve over its full duration. Example:
-       "Opens with a deep, minimal intro building tension over the first 5
-       minutes. Drops into full Neurofunk weight at 6 minutes. Transitions
-       through a 20-minute Techstep section before dissolving into rolling
-       Liquid DnB for the final 15 minutes."
+    MISSION BRIEF:
+    - User-selected genre: {genre}
+    - Genre BPM range: {genre_bpm_min}–{genre_bpm_max} BPM
+    - Mix duration (autonomously selected): {requested_duration_minutes} minutes
+    - Already-used BPM/subgenre/key combinations to AVOID: {used_combinations}
+
+    YOUR AUTONOMOUS DECISIONS (make them confidently — do NOT ask the user):
+    1. Select an exact BPM within {genre_bpm_min}–{genre_bpm_max} that is NOT in
+       the used_combinations list. Choose a value that feels fresh and energetic
+       for the current music market.
+    2. Select a specific subgenre of {genre} that has NOT been used recently.
+       Be precise: e.g. for "Techno" choose "Hypnotic Acid Techno" not just "Techno".
+    3. Choose a key signature that is emotionally appropriate for this genre
+       and has NOT been used with this BPM+subgenre combination.
+    4. Write a detailed style_description (3-5 sentences, English) covering:
+       bass texture, drum pattern complexity, synth/pad character, and overall vibe.
+    5. Write a transition_arc (2-3 sentences) describing how the mix evolves.
+       Be specific about minute markers, e.g. "Minimal intro for 4 min, peak
+       energy drop at 5 min, second arc builds from 22 min through to 38 min."
     6. Calculate stem_count: floor(duration_minutes * 2) — minimum 20, maximum 96.
 
     CRITICAL: The combination (bpm, subgenre, key_signature) MUST be unique
-    and not present in the used_combinations list.
+    and not present in the used_combinations list. This guarantees zero repetition
+    across the entire label catalogue.
   expected_output: >
     A valid JSON object with EXACTLY these keys:
     {
