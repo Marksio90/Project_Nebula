@@ -9,6 +9,7 @@ cso_strategy_task:
     The user has selected a genre — you decide EVERYTHING else.
 
     MISSION BRIEF:
+    - Mix ID (use EXACTLY this value): {mix_id}
     - User-selected genre: {genre}
     - Genre BPM range: {genre_bpm_min}–{genre_bpm_max} BPM
     - Mix duration (autonomously selected): {requested_duration_minutes} minutes
@@ -22,11 +23,12 @@ cso_strategy_task:
        Be precise: e.g. for "Techno" choose "Hypnotic Acid Techno" not just "Techno".
     3. Choose a key signature that is emotionally appropriate for this genre
        and has NOT been used with this BPM+subgenre combination.
-    4. Write a detailed style_description (3-5 sentences, English) covering:
-       bass texture, drum pattern complexity, synth/pad character, and overall vibe.
-    5. Write a transition_arc (2-3 sentences) describing how the mix evolves.
-       Be specific about minute markers, e.g. "Minimal intro for 4 min, peak
-       energy drop at 5 min, second arc builds from 22 min through to 38 min."
+    4. Write style_description: MAX 1 sentence, MAX 25 words. Name bass texture,
+       drum style, and one atmosphere word. Example: "Rolling Reese bass, amen
+       breaks, dark atmospheric pads with filtered vocal chops."
+    5. Write transition_arc: MAX 1 sentence, MAX 30 words. Use minute markers.
+       Example: "Sparse intro 0-3 min, first drop 4 min, peak 20-35 min, liquid
+       breakdown 40 min, euphoric outro 48 min."
     6. Calculate stem_count: floor(duration_minutes * 2) — minimum 14, maximum 150.
 
     CRITICAL: The combination (bpm, subgenre, key_signature) MUST be unique
