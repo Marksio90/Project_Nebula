@@ -98,8 +98,22 @@ class Settings(BaseSettings):
     # ── CrewAI ────────────────────────────────────────────────────────────
     crewai_verbose: bool = Field(default=False, alias="CREWAI_VERBOSE")
 
+    # LLM model for CrewAI agents.
+    # gpt-4o-mini is ~16x cheaper than gpt-4o and handles all orchestration
+    # tasks (strategy, prompts, SEO) very well.
+    # Swap to gpt-4o or claude-sonnet-4-6 for higher-quality output.
+    # Any LiteLLM-compatible model string works:
+    #   gpt-4o-mini           (OpenAI, cheapest good option)
+    #   gpt-4o                (OpenAI, expensive but top quality)
+    #   claude-haiku-4-5-20251001  (Anthropic, ultra-cheap)
+    #   claude-sonnet-4-6          (Anthropic, balanced)
+    llm_model: str = Field(default="gpt-4o-mini", alias="LLM_MODEL")
+    # Separate model for high-precision structured JSON outputs (CSO + QA tasks).
+    # Default same as llm_model — set to a stronger model if CSO quality suffers.
+    llm_precise_model: str = Field(default="gpt-4o-mini", alias="LLM_PRECISE_MODEL")
+
     # ── Gemini / Generation Limits ────────────────────────────────────────
-    lyria_stem_duration_seconds: int = 30       # Gemini Lyria 3 output length
+    stem_duration_seconds: int = 30              # Audio provider stem length (seconds)
     max_stems_per_mix: int = 150                 # 150 × 30 s = 75 min max
     target_lufs: float = -14.0                  # Streaming loudness target
     true_peak_dbfs: float = -1.0                # True peak ceiling

@@ -55,7 +55,7 @@ audio_prompt_task:
     - Arc: {transition_arc}
     - Number of stems: {stem_count}
 
-    Generate exactly {stem_count} audio stem prompts for Gemini Lyria 3.
+    Generate exactly {stem_count} audio stem prompts for the audio generation API.
     Each prompt generates a 30-second audio clip. They must:
     1. Be written in English only.
     2. Follow the musical arc — intro stems are low-intensity, build to drops,
@@ -77,7 +77,7 @@ audio_prompt_task:
       "prompts": [
         {
           "position": 0,
-          "prompt_en": "<40-80 word English prompt for Gemini Lyria 3>",
+          "prompt_en": "<40-80 word English prompt for the audio generation API>",
           "transition_type": "<intro|build|drop|breakdown|peak|outro>",
           "intensity": <0.0-1.0>
         },

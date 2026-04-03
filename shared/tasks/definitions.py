@@ -263,7 +263,7 @@ def generate_audio_prompts(self, strategy_dict: dict) -> dict:
     Audio Prompt Engineer agent.
     Translates the CSO's CSOStrategy into N individual StemPrompts
     (one per 30-second stem), ensuring a coherent musical arc.
-    All prompts are in English for Gemini Lyria 3.
+    All prompts are in English for the configured audio generation provider.
     """
     strategy = CSOStrategy(**strategy_dict)
     log.info("🎵 Audio prompts: mix_id=%s stems=%d", strategy.mix_id, strategy.stem_count)
@@ -299,7 +299,7 @@ def generate_audio_prompts(self, strategy_dict: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TASK 3 — Gemini Stem Fetcher
+# TASK 3 — Audio Stem Fetcher
 # ─────────────────────────────────────────────────────────────────────────────
 
 @celery_app.task(
@@ -313,14 +313,14 @@ def generate_audio_prompts(self, strategy_dict: dict) -> dict:
 )
 def fetch_stems_from_gemini(self, batch_dict: dict) -> dict:
     """
-    Calls Gemini Lyria 3 for each StemPrompt.
+    Calls the configured audio provider (Replicate / Gemini) for each StemPrompt.
     Uses tenacity for per-stem retry with exponential backoff + jitter
     to gracefully absorb API rate limits.
     Stems are downloaded to STEMS_DIR/{mix_id}/{position:04d}.wav
     """
     batch = AudioPromptBatch(**batch_dict)
     mix_id = batch.strategy.mix_id
-    log.info("🌐 Fetching %d stems from Gemini Lyria 3: mix_id=%s", len(batch.prompts), mix_id)
+    log.info("🌐 Fetching %d stems via audio provider: mix_id=%s", len(batch.prompts), mix_id)
     _update_mix_status(mix_id, MixStatus.FETCHING_STEMS)
 
     try:
@@ -550,7 +550,7 @@ def generate_visual_prompts(self, upstream: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TASK 7 — Gemini Visual Fetcher
+# TASK 7 — Visual Asset Fetcher
 # ─────────────────────────────────────────────────────────────────────────────
 
 @celery_app.task(
