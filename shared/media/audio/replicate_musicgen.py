@@ -26,15 +26,16 @@ import httpx
 import soundfile as sf
 import time
 
+from shared.config import get_settings
 from shared.media.base import AudioGenerator, GeneratedAudio
 from shared.utils.retry import retry_http
 
 log = logging.getLogger("nebula.media.audio.replicate")
 
-# facebook/musicgen-stereo-large was deprecated on Replicate.
-# The current model is facebook/musicgen; the variant is selected via the
-# model_version input parameter.
-MUSICGEN_MODEL   = "facebook/musicgen"
+# Model ID is configurable via REPLICATE_MODEL env var (see shared/config.py).
+# The default is "meta/musicgen" — verify the current model at:
+# https://replicate.com/explore?category=audio
+# If you get 404 errors, update REPLICATE_MODEL in your .env file.
 TARGET_SR        = 44_100
 DEFAULT_DURATION = 30
 
@@ -57,6 +58,8 @@ class ReplicateMusicGenProvider(AudioGenerator):
             raise ValueError("REPLICATE_API_TOKEN is required for ReplicateMusicGenProvider")
         os.environ["REPLICATE_API_TOKEN"] = api_token
         self._api_token = api_token
+        self._model = get_settings().replicate_model
+        log.info("ReplicateMusicGenProvider: model=%s", self._model)
 
     @property
     def provider_name(self) -> str:
@@ -85,18 +88,16 @@ class ReplicateMusicGenProvider(AudioGenerator):
 
         try:
             output = replicate.run(
-                MUSICGEN_MODEL,
+                self._model,
                 input={
-                    "prompt":                 full_prompt,
-                    "model_version":          "stereo-large",
-                    "output_format":          "wav",
-                    "normalization_strategy": "peak",
-                    "duration":               duration_s,
-                    # Classifier-free guidance — higher = more prompt-adherent
+                    "prompt":                   full_prompt,
+                    "output_format":            "wav",
+                    "normalization_strategy":   "peak",
+                    "duration":                 duration_s,
                     "classifier_free_guidance": 3,
-                    "temperature":            1.0,
-                    "top_k":                  250,
-                    "top_p":                  0.0,
+                    "temperature":              1.0,
+                    "top_k":                    250,
+                    "top_p":                    0.0,
                 },
             )
         finally:

@@ -41,6 +41,16 @@ class Settings(BaseSettings):
 
     # Replicate — used by ReplicateMusicGenProvider (default audio backend)
     replicate_api_token: str = Field(default="", alias="REPLICATE_API_TOKEN")
+    # Replicate model ID for music generation.
+    # Set this if the default model has been deprecated or moved.
+    # Find current models at: https://replicate.com/explore?category=audio
+    # Common options (verify on Replicate dashboard):
+    #   meta/musicgen  — newest namespace
+    #   facebook/musicgen-stereo-large  — original (may be archived)
+    replicate_model: str = Field(
+        default="meta/musicgen",
+        alias="REPLICATE_MODEL",
+    )
 
     # ── Media Provider Selection ──────────────────────────────────────────
     # Swap providers without touching code — just change these env vars.
@@ -90,7 +100,7 @@ class Settings(BaseSettings):
 
     # ── Gemini / Generation Limits ────────────────────────────────────────
     lyria_stem_duration_seconds: int = 30       # Gemini Lyria 3 output length
-    max_stems_per_mix: int = 96                 # 96 × 30 s = 48 min max
+    max_stems_per_mix: int = 150                 # 150 × 30 s = 75 min max
     target_lufs: float = -14.0                  # Streaming loudness target
     true_peak_dbfs: float = -1.0                # True peak ceiling
 
