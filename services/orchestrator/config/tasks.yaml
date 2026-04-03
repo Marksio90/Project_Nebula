@@ -27,7 +27,7 @@ cso_strategy_task:
     5. Write a transition_arc (2-3 sentences) describing how the mix evolves.
        Be specific about minute markers, e.g. "Minimal intro for 4 min, peak
        energy drop at 5 min, second arc builds from 22 min through to 38 min."
-    6. Calculate stem_count: floor(duration_minutes * 2) — minimum 20, maximum 96.
+    6. Calculate stem_count: floor(duration_minutes * 2) — minimum 14, maximum 150.
 
     CRITICAL: The combination (bpm, subgenre, key_signature) MUST be unique
     and not present in the used_combinations list. This guarantees zero repetition

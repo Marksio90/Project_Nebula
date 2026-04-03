@@ -203,51 +203,35 @@ GENRE_NAMES: list[str] = sorted(GENRES.keys())
 
 def pick_intelligent_duration(genre: str, recent_durations: list[int]) -> int:
     """
-    Select a mix duration that is:
-      1. Within the genre's natural range
-      2. Less likely to repeat a recently used duration
-      3. Non-uniform — avoids always landing on the same value
+    Pick a mix duration with full freedom.
 
-    recent_durations: list of `requested_duration_minutes` from the last N mixes
-                      (most recent first)
+    Rules:
+      - Global range: 7–75 minutes (1-minute steps = 69 possible values)
+      - Genre provides a *preferred zone* (soft weight ×2), not a hard cap
+      - Durations used in the last 15 mixes get weight 0.01 (near-zero chance)
+      - Everything else is uniformly random — no centrality, no clustering
 
-    Returns an integer number of minutes.
+    recent_durations: requested_duration_minutes from the most recent N mixes
+                      (any status, most recent first)
     """
-    profile = GENRES.get(genre, GENRES["Drum and Bass"])
-    min_d, max_d = profile["duration_range"]
+    # Full candidate space — 7 to 75 minutes, every minute
+    candidates = list(range(7, 76))
 
-    # Build candidate list in 5-minute steps; ensure at least one option
-    step = 5
-    candidates = list(range(min_d, max_d + 1, step))
-    if not candidates:
-        candidates = [min_d]
+    profile = GENRES.get(genre)
+    preferred_min = profile["duration_range"][0] if profile else 20
+    preferred_max = profile["duration_range"][1] if profile else 60
 
-    # Recent durations we want to avoid (last 8 mixes)
-    recent_set = set(recent_durations[:8])
-
-    # Weight: recently-used durations get 0.05 weight (almost never picked),
-    #         fresh durations get 1.0.  We also add a slight triangular bias
-    #         toward the middle of the range to avoid extremes every time.
-    midpoint = (min_d + max_d) / 2.0
-    half_range = (max_d - min_d) / 2.0 or 1.0
+    # Durations used in the last 15 mixes are strongly penalised
+    recent_set = set(recent_durations[:15])
 
     weights: list[float] = []
     for d in candidates:
-        # Triangular weight: peaks at midpoint, falls to 0.5 at edges
-        centrality = 1.0 - 0.5 * abs(d - midpoint) / half_range
-        recency_penalty = 0.05 if d in recent_set else 1.0
-        weights.append(centrality * recency_penalty)
+        if d in recent_set:
+            w = 0.01            # near-zero: almost never repeat a recent duration
+        elif preferred_min <= d <= preferred_max:
+            w = 2.0             # genre sweet-spot: twice as likely, but not mandatory
+        else:
+            w = 1.0             # outside sweet-spot: fully valid, equally weighted
+        weights.append(w)
 
-    # Weighted random choice
-    total = sum(weights)
-    if total == 0:
-        return random.choice(candidates)
-
-    r = random.uniform(0, total)
-    cumulative = 0.0
-    for d, w in zip(candidates, weights):
-        cumulative += w
-        if r <= cumulative:
-            return d
-
-    return candidates[-1]
+    return random.choices(candidates, weights=weights, k=1)[0]

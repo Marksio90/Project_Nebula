@@ -41,7 +41,7 @@ class CSOStrategy(_Base):
     key_signature:              str       = Field(min_length=1, max_length=16)  # e.g. "D minor"
     style_description:          str       # English — feeds Prompt Engineers
     transition_arc:             str       # English — e.g. "Dark Neurofunk → Liquid DnB at ~22 min"
-    stem_count:                 int       = Field(ge=20, le=96)
+    stem_count:                 int       = Field(ge=14, le=150)
     requested_duration_minutes: int
 
     @field_validator("bpm")
