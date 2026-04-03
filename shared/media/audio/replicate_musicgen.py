@@ -83,26 +83,26 @@ class ReplicateMusicGenProvider(AudioGenerator):
         log.debug("MusicGen request: bpm=%.1f duration=%ds prompt='%.80s'",
                   bpm, duration_s, full_prompt)
 
-        output = replicate.run(
-            MUSICGEN_MODEL,
-            input={
-                "prompt":                 full_prompt,
-                "model_version":          "stereo-large",
-                "output_format":          "wav",
-                "normalization_strategy": "peak",
-                "duration":               duration_s,
-                # Classifier-free guidance — higher = more prompt-adherent
-                "classifier_free_guidance": 3,
-                "temperature":            1.0,
-                "top_k":                  250,
-                "top_p":                  0.0,
-            },
-        )
-
-        # Throttle to stay within Replicate's per-minute prediction limit.
-        # Low-credit accounts (<$5) are capped at 6/min (burst=1) — without
-        # this sleep every stem after the first would get a 429.
-        time.sleep(_REPLICATE_REQUEST_DELAY_S)
+        try:
+            output = replicate.run(
+                MUSICGEN_MODEL,
+                input={
+                    "prompt":                 full_prompt,
+                    "model_version":          "stereo-large",
+                    "output_format":          "wav",
+                    "normalization_strategy": "peak",
+                    "duration":               duration_s,
+                    # Classifier-free guidance — higher = more prompt-adherent
+                    "classifier_free_guidance": 3,
+                    "temperature":            1.0,
+                    "top_k":                  250,
+                    "top_p":                  0.0,
+                },
+            )
+        finally:
+            # Always throttle — even on failure — so the next stem request
+            # doesn't fire immediately into a rate-limit wall.
+            time.sleep(_REPLICATE_REQUEST_DELAY_S)
 
         # The SDK returns either a FileOutput object or a URL string
         audio_bytes = self._extract_bytes(output)
