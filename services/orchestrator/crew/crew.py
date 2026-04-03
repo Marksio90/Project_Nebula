@@ -40,9 +40,13 @@ def _load_yaml(filename: str) -> dict:
 # ── LLM singleton ─────────────────────────────────────────────────────────────
 
 def _get_llm() -> LLM:
-    # 16 384 tokens — enough for 90+ stem prompts (~80 words each) in one call
+    """
+    Creative LLM for prompt generation tasks.
+    Model controlled by LLM_MODEL env var (default: gpt-4o-mini).
+    16 384 output tokens — sufficient for 90+ stem prompts in one response.
+    """
     return LLM(
-        model="gpt-4o",
+        model=settings.llm_model,
         api_key=settings.openai_api_key,
         temperature=0.7,
         max_tokens=16_384,
@@ -50,9 +54,13 @@ def _get_llm() -> LLM:
 
 
 def _get_precise_llm() -> LLM:
-    """Lower temperature for structured JSON outputs (strategy, QA, SEO)."""
+    """
+    Structured-output LLM for CSO strategy, QA, and SEO tasks.
+    Model controlled by LLM_PRECISE_MODEL env var (default: gpt-4o-mini).
+    Low temperature + high token budget for reliable JSON + Polish copy.
+    """
     return LLM(
-        model="gpt-4o",
+        model=settings.llm_precise_model,
         api_key=settings.openai_api_key,
         temperature=0.2,
         max_tokens=16_384,
