@@ -40,21 +40,22 @@ def _load_yaml(filename: str) -> dict:
 # ── LLM singleton ─────────────────────────────────────────────────────────────
 
 def _get_llm() -> LLM:
+    # 16 384 tokens — enough for 90+ stem prompts (~80 words each) in one call
     return LLM(
         model="gpt-4o",
         api_key=settings.openai_api_key,
         temperature=0.7,
-        max_tokens=4096,
+        max_tokens=16_384,
     )
 
 
 def _get_precise_llm() -> LLM:
-    """Lower temperature for structured JSON outputs."""
+    """Lower temperature for structured JSON outputs (strategy, QA, SEO)."""
     return LLM(
         model="gpt-4o",
         api_key=settings.openai_api_key,
         temperature=0.2,
-        max_tokens=8192,
+        max_tokens=16_384,
     )
 
 
