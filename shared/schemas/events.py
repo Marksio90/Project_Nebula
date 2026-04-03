@@ -23,10 +23,9 @@ class _Base(BaseModel):
 
 class MixPipelineRequest(_Base):
     """Payload that kicks off the entire orchestrate_mix_pipeline task."""
-    mix_id: str
-    requested_duration_minutes: int = Field(ge=10, le=120, default=45)
-    style_hint: str | None = None
-    force_bpm: int | None = Field(default=None, ge=60, le=220)
+    mix_id:                     str
+    genre:                      str                  # User-selected genre from GENRE_NAMES
+    requested_duration_minutes: int = Field(ge=10, le=300)  # Set autonomously by orchestrator
 
 
 # ── CSO strategy output ───────────────────────────────────────────────────────

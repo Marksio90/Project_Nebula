@@ -78,13 +78,14 @@ def _make_agent(key: str, tools: list | None = None, llm=None) -> Agent:
 
 def build_strategy_crew(
     mix_id: str,
+    genre: str,
+    genre_bpm_range: tuple[int, int],
     requested_duration_minutes: int,
-    style_hint: str | None,
-    force_bpm: float | None,
     used_combinations_json: str,
 ) -> Crew:
     """
     CSO crew: determines the unique BPM, subgenre, key, and arc for the mix.
+    Genre is the only user input; the agent decides all other parameters.
     Includes QA self-reflection to verify the chosen combo is genuinely novel.
     """
     task_cfg = _load_yaml("tasks.yaml")["cso_strategy_task"]
@@ -98,9 +99,10 @@ def build_strategy_crew(
 
     strategy_task = Task(
         description=task_cfg["description"].format(
+            genre=genre,
+            genre_bpm_min=genre_bpm_range[0],
+            genre_bpm_max=genre_bpm_range[1],
             requested_duration_minutes=requested_duration_minutes,
-            style_hint=style_hint or "None — choose autonomously",
-            force_bpm=force_bpm or "None — choose autonomously",
             used_combinations=used_combinations_json,
         ),
         expected_output=task_cfg["expected_output"],

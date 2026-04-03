@@ -129,16 +129,20 @@ def _exports_dir(mix_id: str) -> Path:
 @retry_openai_api
 def run_cso_agent(
     mix_id: str,
+    genre: str,
     requested_duration_minutes: int,
-    style_hint: str | None,
-    force_bpm: int | None,
 ) -> CSOStrategy:
     """
     Runs the Chief Strategy Officer CrewAI crew.
-    Queries the dedup registry before kicking off the crew so the agent
-    has full visibility of all previously used combinations.
+    Genre is the only user input; all other parameters (BPM, subgenre, key,
+    arc, stem count) are decided autonomously by the CSO agent.
+    Queries the dedup registry so the agent never repeats a combination.
     """
     from services.orchestrator.crew.crew import build_strategy_crew
+    from shared.genres import GENRES
+
+    # Pass genre profile to the CSO so it knows the BPM + duration bounds
+    genre_profile = GENRES.get(genre, {})
 
     # Load the full registry to pass as context to the CSO
     with get_sync_db() as db:
@@ -158,9 +162,9 @@ def run_cso_agent(
 
     crew = build_strategy_crew(
         mix_id=mix_id,
+        genre=genre,
+        genre_bpm_range=genre_profile.get("bpm_range", (100, 180)),
         requested_duration_minutes=requested_duration_minutes,
-        style_hint=style_hint,
-        force_bpm=force_bpm,
         used_combinations_json=used_json,
     )
 

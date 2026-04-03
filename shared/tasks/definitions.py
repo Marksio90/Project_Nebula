@@ -117,15 +117,30 @@ def _is_quota_exhausted(exc: Exception) -> bool:
 def orchestrate_mix_pipeline(
     self,
     mix_id: str,
-    requested_duration_minutes: int = 45,
-    style_hint: str | None = None,
-    force_bpm: int | None = None,
+    genre: str = "Drum and Bass",
 ) -> dict:
     """
     Entry-point task.  Creates the Mix row and fires the full Celery chain.
+    Duration is chosen autonomously based on genre profile + recent history.
     Returns immediately so the API gateway can respond 202 Accepted.
     """
-    log.info("▶ orchestrate_mix_pipeline mix_id=%s duration=%dmin", mix_id, requested_duration_minutes)
+    from sqlalchemy import desc as _desc
+    from shared.genres import pick_intelligent_duration
+
+    # Pick an intelligent duration: genre-appropriate + avoids recent repeats
+    with get_sync_db() as db:
+        recent_durations = db.execute(
+            select(Mix.requested_duration_minutes)
+            .where(Mix.status == MixStatus.COMPLETE)
+            .order_by(_desc(Mix.created_at))
+            .limit(20)
+        ).scalars().all()
+
+    requested_duration_minutes = pick_intelligent_duration(genre, list(recent_durations))
+    log.info(
+        "▶ orchestrate_mix_pipeline mix_id=%s genre=%s duration=%dmin",
+        mix_id, genre, requested_duration_minutes,
+    )
 
     # Persist the Mix record
     with get_sync_db() as db:
@@ -134,15 +149,14 @@ def orchestrate_mix_pipeline(
             celery_task_id=self.request.id,
             status=MixStatus.PENDING,
             requested_duration_minutes=requested_duration_minutes,
-            style_hint=style_hint,
+            style_hint=genre,   # Store genre in style_hint for display/history
         )
         db.add(mix)
 
     request_payload = MixPipelineRequest(
         mix_id=str(mix_id),
+        genre=genre,
         requested_duration_minutes=requested_duration_minutes,
-        style_hint=style_hint,
-        force_bpm=force_bpm,
     ).model_dump()
 
     # Build the sequential pipeline chain
@@ -186,18 +200,17 @@ def run_cso_strategy(self, request_payload: dict) -> dict:
     Returns a serialised CSOStrategy dict.
     """
     req = MixPipelineRequest(**request_payload)
-    log.info("🎯 CSO strategy: mix_id=%s hint=%s", req.mix_id, req.style_hint)
+    log.info("🎯 CSO strategy: mix_id=%s genre=%s duration=%dmin",
+             req.mix_id, req.genre, req.requested_duration_minutes)
     _update_mix_status(req.mix_id, MixStatus.STRATEGISING)
 
     try:
-        # Import here to keep the shared module free of heavy deps at import time
         from services.orchestrator.crew.agents import run_cso_agent
 
         strategy: CSOStrategy = run_cso_agent(
             mix_id=req.mix_id,
+            genre=req.genre,
             requested_duration_minutes=req.requested_duration_minutes,
-            style_hint=req.style_hint,
-            force_bpm=req.force_bpm,
         )
     except Exception as exc:
         log.warning("CSO strategy error (attempt %d): %s", self.request.retries + 1, exc)
