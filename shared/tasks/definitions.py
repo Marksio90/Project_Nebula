@@ -338,6 +338,17 @@ def fetch_stems_from_gemini(self, batch_dict: dict) -> dict:
     if result.failed_count > 0:
         log.warning("⚠ %d stems failed; %d ready", result.failed_count, result.success_count)
 
+    # Guard: stitch_and_master_audio needs ≥ 2 READY stems to produce a mix.
+    # If the batch yielded fewer, fail fast here rather than letting DSP crash
+    # on a RuntimeError after retrying 3 × 30 s for nothing.
+    if result.success_count < 2:
+        msg = (
+            f"Insufficient READY stems: {result.success_count}/{len(batch.prompts)} "
+            f"generated successfully — cannot stitch a mix."
+        )
+        _mark_mix_failed(mix_id, msg)
+        raise RuntimeError(msg)
+
     log.info("✅ Stems ready: %d/%d", result.success_count, len(batch.prompts))
     # Pass only what downstream tasks need
     return {
