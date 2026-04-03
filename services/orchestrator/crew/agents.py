@@ -181,34 +181,76 @@ def run_cso_agent(
 # 2. Audio Prompt Engineer
 # ─────────────────────────────────────────────────────────────────────────────
 
+AUDIO_PROMPT_BATCH_SIZE = 25  # Max stems per LLM call (~25 × 150 tokens ≈ 3 750 < 16 384)
+
+
 @retry_openai_api
 def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
     """
-    Runs the Audio Prompt Engineer crew to generate stem_count English
-    Lyria 3 prompts forming a coherent musical arc.
+    Runs the Audio Prompt Engineer crew in batches of AUDIO_PROMPT_BATCH_SIZE stems
+    to stay within the 16 384-token output limit.  All batches are assembled and
+    re-indexed so the final AudioPromptBatch has contiguous positions 0..stem_count-1.
     """
     from services.orchestrator.crew.crew import build_audio_prompt_crew
+    import math
 
-    crew = build_audio_prompt_crew(
-        mix_id=strategy.mix_id,
-        bpm=strategy.bpm,
-        subgenre=strategy.subgenre,
-        key_signature=strategy.key_signature,
-        style_description=strategy.style_description,
-        transition_arc=strategy.transition_arc,
-        stem_count=strategy.stem_count,
+    total_stems   = strategy.stem_count
+    batch_size    = AUDIO_PROMPT_BATCH_SIZE
+    total_batches = math.ceil(total_stems / batch_size)
+    all_prompts: list[StemPrompt] = []
+
+    log.info(
+        "Generating %d audio prompts for mix %s in %d batches of ≤%d",
+        total_stems, strategy.mix_id, total_batches, batch_size,
     )
 
-    result = crew.kickoff()
-    raw = result.raw if hasattr(result, "raw") else str(result)
-    data = _parse_crew_json(raw, "AudioPromptBatch")
-    data["mix_id"] = strategy.mix_id
-    data["strategy"] = strategy.model_dump()
+    for batch_num in range(1, total_batches + 1):
+        pos_start = (batch_num - 1) * batch_size
+        pos_end   = min(pos_start + batch_size - 1, total_stems - 1)
 
-    # Validate each prompt entry
-    prompts = [StemPrompt(**p) for p in data.get("prompts", [])]
-    log.info("Audio prompts generated: %d stems for mix %s", len(prompts), strategy.mix_id)
-    return AudioPromptBatch(mix_id=strategy.mix_id, strategy=strategy, prompts=prompts)
+        crew = build_audio_prompt_crew(
+            mix_id=strategy.mix_id,
+            bpm=strategy.bpm,
+            subgenre=strategy.subgenre,
+            key_signature=strategy.key_signature,
+            style_description=strategy.style_description,
+            transition_arc=strategy.transition_arc,
+            total_stems=total_stems,
+            position_start=pos_start,
+            position_end_inclusive=pos_end,
+            batch_num=batch_num,
+            total_batches=total_batches,
+        )
+
+        result = crew.kickoff()
+        raw    = result.raw if hasattr(result, "raw") else str(result)
+        data   = _parse_crew_json(raw, f"AudioPromptBatch batch {batch_num}/{total_batches}")
+
+        batch_prompts = data.get("prompts", [])
+        if not batch_prompts:
+            raise ValueError(
+                f"Audio PE returned 0 prompts for batch {batch_num}/{total_batches} "
+                f"(positions {pos_start}-{pos_end}) of mix {strategy.mix_id}"
+            )
+
+        # Force-correct positions in case the LLM mis-numbered them
+        for i, p in enumerate(batch_prompts):
+            p["position"] = pos_start + i
+
+        all_prompts.extend([StemPrompt(**p) for p in batch_prompts])
+        log.info(
+            "Batch %d/%d done: %d prompts (positions %d-%d)",
+            batch_num, total_batches, len(batch_prompts), pos_start, pos_end,
+        )
+
+    # Trim to exact stem_count in case LLM over-generated on the last batch
+    all_prompts = all_prompts[:total_stems]
+
+    log.info(
+        "Audio prompts complete: %d/%d stems for mix %s",
+        len(all_prompts), total_stems, strategy.mix_id,
+    )
+    return AudioPromptBatch(mix_id=strategy.mix_id, strategy=strategy, prompts=all_prompts)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,7 +288,7 @@ def fetch_stems_batch(batch: AudioPromptBatch) -> StemBatchResult:
             generator.generate_stem(
                 prompt=prompt.prompt_en,
                 bpm=batch.strategy.bpm,
-                duration_s=settings.lyria_stem_duration_seconds,
+                duration_s=settings.stem_duration_seconds,
                 output_path=file_path,
             )
             with get_sync_db() as db:

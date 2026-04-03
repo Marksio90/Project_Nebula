@@ -153,40 +153,70 @@ def build_audio_prompt_crew(
     key_signature: str,
     style_description: str,
     transition_arc: str,
-    stem_count: int,
+    total_stems: int,
+    position_start: int,
+    position_end_inclusive: int,
+    batch_num: int,
+    total_batches: int,
 ) -> Crew:
     """
-    Audio PE crew: generates stem_count ordered Lyria 3 prompts in English.
-    QA agent reviews for prompt quality, arc coherence, and intensity curve.
+    Audio PE crew: generates one batch of audio prompts (positions position_start..position_end_inclusive).
+    QA agent reviews prompt quality, arc coherence, and exact count.
+    Callers loop over batches of BATCH_SIZE=25 to avoid token limits.
     """
-    task_cfg = _load_yaml("tasks.yaml")["audio_prompt_task"]
+    task_cfg   = _load_yaml("tasks.yaml")["audio_prompt_task"]
+    batch_size = position_end_inclusive - position_start + 1
+
+    # Arc boundary helpers passed to the task description so the agent can place
+    # each batch correctly within the overall intensity curve.
+    arc_intro_end   = max(0, int(total_stems * 0.15) - 1)
+    arc_peak_start  = int(total_stems * 0.45)
+    arc_peak_end    = int(total_stems * 0.70)
+    arc_outro_start = int(total_stems * 0.85)
 
     audio_pe = _make_agent("audio_prompt_engineer", llm=_get_llm())
     qa       = _make_agent("qa_agent", llm=_get_precise_llm())
 
     prompt_task = Task(
         description=task_cfg["description"].format(
+            mix_id=mix_id,
             bpm=bpm,
             subgenre=subgenre,
             key_signature=key_signature,
             style_description=style_description,
             transition_arc=transition_arc,
-            stem_count=stem_count,
+            batch_num=batch_num,
+            total_batches=total_batches,
+            total_stems=total_stems,
+            batch_size=batch_size,
+            position_start=position_start,
+            position_end_inclusive=position_end_inclusive,
+            arc_intro_end=arc_intro_end,
+            arc_peak_start=arc_peak_start,
+            arc_peak_end=arc_peak_end,
+            arc_outro_start=arc_outro_start,
+            total_stems_minus_1=total_stems - 1,
         ),
-        expected_output=task_cfg["expected_output"],
+        expected_output=task_cfg["expected_output"].format(
+            mix_id=mix_id,
+            batch_size=batch_size,
+            position_start=position_start,
+            position_end_inclusive=position_end_inclusive,
+        ),
         agent=audio_pe,
     )
 
     qa_task = Task(
         description=(
-            f"Review the {stem_count} audio prompts generated for mix_id='{mix_id}'. "
-            "Check: (1) exactly {stem_count} prompts exist, (2) intensity values form "
-            "a plausible arc (not flat at 1.0 throughout), (3) each prompt is 40-80 words "
-            "and includes BPM, drum type, bass type, and atmosphere descriptors, "
+            f"Review batch {batch_num}/{total_batches} of audio prompts for mix_id='{mix_id}'. "
+            f"Positions {position_start}–{position_end_inclusive} ({batch_size} prompts). "
+            f"Check: (1) exactly {batch_size} prompts, positions sequential from {position_start}, "
+            "(2) intensity values fit the arc position (not all 1.0), "
+            "(3) each prompt 40-80 words with BPM, drum type, bass type, atmosphere, energy phrase, "
             "(4) transition_type values are valid enum values. "
-            "Return the corrected JSON if issues found, or original JSON if valid."
-        ).format(stem_count=stem_count),
-        expected_output="The final, validated JSON AudioPromptBatch.",
+            "Return the corrected JSON if any issues found, or original JSON if valid."
+        ),
+        expected_output=f"The final, validated JSON with exactly {batch_size} prompts.",
         agent=qa,
         context=[prompt_task],
     )
