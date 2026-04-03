@@ -108,6 +108,7 @@ def build_strategy_crew(
 
     strategy_task = Task(
         description=task_cfg["description"].format(
+            mix_id=mix_id,
             genre=genre,
             genre_bpm_min=genre_bpm_range[0],
             genre_bpm_max=genre_bpm_range[1],
