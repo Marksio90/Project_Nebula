@@ -16,9 +16,10 @@ import os
 from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -54,6 +55,13 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+# ── Static frontend ───────────────────────────────────────────────────────────
+_FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
+_FRONTEND_INDEX = os.path.join(_FRONTEND_DIR, "index.html")
+
+if os.path.isdir(_FRONTEND_DIR):
+    app.mount("/static", StaticFiles(directory=_FRONTEND_DIR), name="static")
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -95,7 +103,65 @@ class MixStatusResponse(BaseModel):
     info: dict | None = None
 
 
+class MixListItem(BaseModel):
+    mix_id: UUID
+    status: str
+    bpm: float | None
+    subgenre: str | None
+    style_hint: str | None
+    requested_duration_minutes: int
+    actual_duration_seconds: float | None
+    qa_passed: bool
+    error_message: str | None
+    created_at: str
+    updated_at: str
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def serve_frontend() -> HTMLResponse:
+    """Serve the MVP frontend dashboard."""
+    if os.path.isfile(_FRONTEND_INDEX):
+        with open(_FRONTEND_INDEX, encoding="utf-8") as fh:
+            return HTMLResponse(content=fh.read())
+    return HTMLResponse(
+        content="<h1>Project Nebula</h1><p>Frontend not found. See /docs for the API.</p>"
+    )
+
+
+@app.get(
+    "/mixes",
+    response_model=list[MixListItem],
+    summary="List all mixes (most recent first)",
+)
+async def list_mixes(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[MixListItem]:
+    from sqlalchemy import desc
+    async with get_db() as session:
+        result = await session.execute(
+            select(Mix).order_by(desc(Mix.created_at)).offset(offset).limit(limit)
+        )
+        mixes = result.scalars().all()
+    return [
+        MixListItem(
+            mix_id=UUID(m.id),
+            status=m.status.value,
+            bpm=m.bpm,
+            subgenre=m.subgenre,
+            style_hint=m.style_hint,
+            requested_duration_minutes=m.requested_duration_minutes,
+            actual_duration_seconds=m.actual_duration_seconds,
+            qa_passed=m.qa_passed,
+            error_message=m.error_message,
+            created_at=m.created_at.isoformat(),
+            updated_at=m.updated_at.isoformat(),
+        )
+        for m in mixes
+    ]
+
 
 @app.post(
     "/mixes/generate",
