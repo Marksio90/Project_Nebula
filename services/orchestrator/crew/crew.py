@@ -115,7 +115,7 @@ def build_strategy_crew(
             f"Review the CSO's strategy output for mix_id='{mix_id}'. "
             "Verify: (1) the JSON is valid, (2) the bpm/subgenre/key combination "
             f"does NOT appear in this used list: {used_combinations_json}, "
-            "(3) stem_count equals floor(requested_duration_minutes * 2) capped at 96. "
+            "(3) stem_count equals floor(requested_duration_minutes * 2) capped at 150. "
             "If any check fails, provide the corrected JSON. If all checks pass, "
             "output the original JSON unchanged."
         ),

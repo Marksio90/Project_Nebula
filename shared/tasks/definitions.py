@@ -127,13 +127,13 @@ def orchestrate_mix_pipeline(
     from sqlalchemy import desc as _desc
     from shared.genres import pick_intelligent_duration
 
-    # Pick an intelligent duration: genre-appropriate + avoids recent repeats
+    # Pick an intelligent duration — check ALL recent mixes (any status)
+    # so in-progress mixes also prevent duration repetition
     with get_sync_db() as db:
         recent_durations = db.execute(
             select(Mix.requested_duration_minutes)
-            .where(Mix.status == MixStatus.COMPLETE)
             .order_by(_desc(Mix.created_at))
-            .limit(20)
+            .limit(15)
         ).scalars().all()
 
     requested_duration_minutes = pick_intelligent_duration(genre, list(recent_durations))
