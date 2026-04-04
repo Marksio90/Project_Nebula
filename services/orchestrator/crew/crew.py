@@ -212,13 +212,21 @@ def build_audio_prompt_crew(
         description=(
             f"Review batch {batch_num}/{total_batches} of audio prompts for mix_id='{mix_id}'. "
             f"Positions {position_start}–{position_end_inclusive} ({batch_size} prompts). "
-            f"Check: (1) exactly {batch_size} prompts, positions sequential from {position_start}, "
-            "(2) intensity values fit the arc position (not all 1.0), "
+            "CRITICAL: Your entire response must be ONLY a valid JSON object. "
+            "Do NOT write any explanation, summary, validation notes, or prose of any kind. "
+            "Start your response with {{ and end with }}. Nothing before or after the JSON. "
+            f"Check: (1) exactly {batch_size} prompts with sequential positions from {position_start}, "
+            "(2) intensity values form a plausible arc (not all identical), "
             "(3) each prompt 40-80 words with BPM, drum type, bass type, atmosphere, energy phrase, "
-            "(4) transition_type values are valid enum values. "
-            "Return the corrected JSON if any issues found, or original JSON if valid."
+            "(4) transition_type is one of: intro|build|drop|breakdown|peak|outro. "
+            "If the JSON is valid, output it unchanged. If corrections are needed, output ONLY the corrected JSON."
         ),
-        expected_output=f"The final, validated JSON with exactly {batch_size} prompts.",
+        expected_output=(
+            "ONLY a raw JSON object with no surrounding text whatsoever. "
+            f"Must contain exactly {batch_size} items in the 'prompts' array. "
+            "No markdown fences, no explanation sentences, no confirmation, no validation summary. "
+            "The response must begin with { and end with }."
+        ),
         agent=qa,
         context=[prompt_task],
     )

@@ -190,12 +190,14 @@ def run_cso_agent(
 AUDIO_PROMPT_BATCH_SIZE = 25  # Max stems per LLM call (~25 × 150 tokens ≈ 3 750 < 16 384)
 
 
-@retry_openai_api
 def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
     """
     Runs the Audio Prompt Engineer crew in batches of AUDIO_PROMPT_BATCH_SIZE stems
     to stay within the 16 384-token output limit.  All batches are assembled and
     re-indexed so the final AudioPromptBatch has contiguous positions 0..stem_count-1.
+
+    Per-batch retry (max 2 attempts per batch) prevents a single bad QA response
+    from restarting all previously-completed batches.
     """
     from services.orchestrator.crew.crew import build_audio_prompt_crew
     import math
@@ -214,40 +216,68 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
         pos_start = (batch_num - 1) * batch_size
         pos_end   = min(pos_start + batch_size - 1, total_stems - 1)
 
-        crew = build_audio_prompt_crew(
-            mix_id=strategy.mix_id,
-            bpm=strategy.bpm,
-            subgenre=strategy.subgenre,
-            key_signature=strategy.key_signature,
-            style_description=strategy.style_description,
-            transition_arc=strategy.transition_arc,
-            total_stems=total_stems,
-            position_start=pos_start,
-            position_end_inclusive=pos_end,
-            batch_num=batch_num,
-            total_batches=total_batches,
-        )
+        batch_prompts: list[StemPrompt] | None = None
+        last_exc: Exception | None = None
 
-        result = crew.kickoff()
-        raw    = result.raw if hasattr(result, "raw") else str(result)
-        data   = _parse_crew_json(raw, f"AudioPromptBatch batch {batch_num}/{total_batches}")
+        for attempt in range(1, 3):  # max 2 attempts per batch
+            try:
+                crew = build_audio_prompt_crew(
+                    mix_id=strategy.mix_id,
+                    bpm=strategy.bpm,
+                    subgenre=strategy.subgenre,
+                    key_signature=strategy.key_signature,
+                    style_description=strategy.style_description,
+                    transition_arc=strategy.transition_arc,
+                    total_stems=total_stems,
+                    position_start=pos_start,
+                    position_end_inclusive=pos_end,
+                    batch_num=batch_num,
+                    total_batches=total_batches,
+                )
 
-        batch_prompts = data.get("prompts", [])
-        if not batch_prompts:
-            raise ValueError(
-                f"Audio PE returned 0 prompts for batch {batch_num}/{total_batches} "
-                f"(positions {pos_start}-{pos_end}) of mix {strategy.mix_id}"
+                result = crew.kickoff()
+                raw    = result.raw if hasattr(result, "raw") else str(result)
+                data   = _parse_crew_json(raw, f"AudioPromptBatch batch {batch_num}/{total_batches}")
+
+                prompts_raw = data.get("prompts", [])
+                if not prompts_raw:
+                    raise ValueError(
+                        f"Audio PE returned 0 prompts for batch {batch_num}/{total_batches} "
+                        f"(positions {pos_start}-{pos_end})"
+                    )
+
+                # Force-correct positions in case the LLM mis-numbered them
+                for i, p in enumerate(prompts_raw):
+                    p["position"] = pos_start + i
+
+                batch_prompts = [StemPrompt(**p) for p in prompts_raw]
+                log.info(
+                    "Batch %d/%d done: %d prompts (positions %d-%d)",
+                    batch_num, total_batches, len(batch_prompts), pos_start, pos_end,
+                )
+                break  # success — move on to next batch
+
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    log.warning(
+                        "Batch %d/%d attempt %d/%d failed: %s — retrying batch only",
+                        batch_num, total_batches, attempt, 2, exc,
+                    )
+                    time.sleep(2)
+                else:
+                    log.error(
+                        "Batch %d/%d permanently failed after 2 attempts: %s",
+                        batch_num, total_batches, exc,
+                    )
+
+        if batch_prompts is None:
+            # Both attempts failed — raise so the Celery task can retry the whole step
+            raise RuntimeError(
+                f"Audio PE batch {batch_num}/{total_batches} failed for mix {strategy.mix_id}: {last_exc}"
             )
 
-        # Force-correct positions in case the LLM mis-numbered them
-        for i, p in enumerate(batch_prompts):
-            p["position"] = pos_start + i
-
-        all_prompts.extend([StemPrompt(**p) for p in batch_prompts])
-        log.info(
-            "Batch %d/%d done: %d prompts (positions %d-%d)",
-            batch_num, total_batches, len(batch_prompts), pos_start, pos_end,
-        )
+        all_prompts.extend(batch_prompts)
 
     # Trim to exact stem_count in case LLM over-generated on the last batch
     all_prompts = all_prompts[:total_stems]
