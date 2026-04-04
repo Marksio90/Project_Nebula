@@ -890,8 +890,9 @@ def upload_to_tiktok(self, upstream: dict) -> dict:
             _update_mix_status(mix_id, MixStatus.COMPLETE)
             return {**upstream, "tiktok_uploads": [], "warning": str(exc)}
 
+    shorts_titles_pl = upstream.get("seo", {}).get("shorts_titles_pl") or []
     with get_sync_db() as db:
-        for r in results:
+        for i, r in enumerate(results):
             upload_record = PlatformUpload(
                 mix_id=mix_id,
                 platform=Platform.TIKTOK,
@@ -899,7 +900,7 @@ def upload_to_tiktok(self, upstream: dict) -> dict:
                 upload_status=UploadStatus.UPLOADED if r.status == "uploaded" else UploadStatus.FAILED,
                 platform_video_id=r.platform_video_id,
                 platform_video_url=r.platform_video_url,
-                title_pl=upstream.get("seo", {}).get("shorts_titles_pl", [""])[0],
+                title_pl=shorts_titles_pl[i] if i < len(shorts_titles_pl) else None,
                 tags_pl=upstream.get("seo", {}).get("tags_pl"),
                 error_message=r.error,
             )

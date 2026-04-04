@@ -342,7 +342,7 @@ def run_visual_prompt_engineer(
         mix_id=mix_id,
         subgenre=mix.subgenre or subgenre or "Drum and Bass",
         bpm=mix.bpm or bpm or 174.0,
-        style_description=style_hint or f"{mix.subgenre} drum and bass mix at {mix.bpm} BPM",
+        style_description=style_hint or f"{mix.subgenre or 'Drum and Bass'} mix at {mix.bpm or 174} BPM",
     )
 
     result = crew.kickoff()
