@@ -128,36 +128,61 @@
     .b-pending  { background:rgba(136,144,168,.12); color:var(--text2); }
     .b-active   { background:rgba(108,99,255,.12);  color:var(--accent); }
 
-    .ai-chips { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+    .ai-chips { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
     .ai-chip { background:var(--bg3); border:1px solid var(--border); border-radius:20px; padding:3px 10px; font-size:11px; color:var(--text2); }
     .ai-chip span { color:var(--text); font-weight:600; }
 
-    .pipeline-stages { display:flex; gap:2px; margin-bottom:5px; }
-    .stage { flex:1; height:4px; border-radius:3px; background:var(--bg3); transition:background .3s; }
-    .stage.done    { background:var(--green); }
-    .stage.current { background:var(--accent); animation:blink 1.3s infinite; }
-    .stage.failed  { background:var(--red); }
-    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    /* ── Pipeline circles ──────────────────────────── */
+    .pipeline-wrap { margin-bottom:4px; }
+    .pipeline-circles { display:flex; align-items:center; gap:0; overflow-x:auto; padding-bottom:4px; }
+    .pipeline-circles::-webkit-scrollbar { height:2px; }
+    .pipeline-circles::-webkit-scrollbar-thumb { background:var(--border); }
+    .pc-step { display:flex; align-items:center; flex-shrink:0; }
+    .pc-dot {
+      width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+      font-size:9px; font-weight:700; flex-shrink:0; border:2px solid var(--border);
+      background:var(--bg3); color:var(--text2); cursor:default; transition:all .3s;
+      position:relative;
+    }
+    .pc-dot.done    { background:rgba(0,229,160,.15); border-color:var(--green); color:var(--green); }
+    .pc-dot.current { background:rgba(108,99,255,.2); border-color:var(--accent); color:var(--accent); animation:dotPulse 1.4s ease-in-out infinite; box-shadow:0 0 10px rgba(108,99,255,.45); }
+    .pc-dot.failed  { background:rgba(255,77,109,.15); border-color:var(--red); color:var(--red); }
+    .pc-line { flex:1; height:2px; background:var(--border); min-width:4px; max-width:18px; flex-shrink:0; transition:background .3s; }
+    .pc-line.done { background:var(--green); }
+    @keyframes dotPulse { 0%,100%{box-shadow:0 0 0 0 rgba(108,99,255,.45)} 50%{box-shadow:0 0 10px 4px rgba(108,99,255,.2)} }
 
-    .pipeline-label { display:flex; justify-content:space-between; font-size:11px; color:var(--text2); }
-    .stage-name { color:var(--accent); font-weight:600; }
+    .pipeline-foot { display:flex; justify-content:space-between; font-size:11px; color:var(--text2); margin-top:5px; }
+    .pipeline-foot .cur-label { color:var(--accent); font-weight:600; }
 
-    /* ── Live progress detail (active mixes only) ─── */
-    .live-progress { background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:10px 14px; margin-top:8px; font-size:12px; }
-    .live-step-label { font-weight:700; color:var(--text); margin-bottom:3px; display:flex; align-items:center; gap:8px; }
-    .live-step-desc  { color:var(--text2); font-size:11px; margin-bottom:8px; }
-    .live-bars { display:flex; flex-direction:column; gap:5px; }
-    .live-bar-row { display:flex; align-items:center; gap:8px; }
-    .live-bar-label { font-size:11px; color:var(--text2); width:70px; flex-shrink:0; }
-    .live-bar-track { flex:1; height:6px; background:var(--bg); border-radius:3px; overflow:hidden; }
-    .live-bar-fill  { height:100%; border-radius:3px; transition:width .4s ease; }
-    .live-bar-fill.audio   { background:var(--accent); }
-    .live-bar-fill.visual  { background:#ff9f43; }
-    .live-bar-fill.done    { background:var(--green); }
-    .live-bar-count { font-size:11px; color:var(--text); min-width:55px; text-align:right; }
-    .live-bar-fail  { font-size:10px; color:var(--red); margin-left:2px; }
-    .warn-stuck { background:rgba(255,159,67,.1); border:1px solid rgba(255,159,67,.4); border-radius:4px; padding:4px 10px; font-size:11px; color:#ff9f43; margin-top:6px; }
-    .live-elapsed { font-size:10px; color:var(--text2); margin-left:auto; }
+    /* ── Live progress panel (active mixes) ──────── */
+    .live-progress { background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:12px 16px; margin-top:10px; }
+
+    .live-step-header { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px; }
+    .live-step-krok { font-size:10px; color:var(--text2); text-transform:uppercase; letter-spacing:.8px; }
+    .live-elapsed {
+      font-size:11px; font-weight:600; padding:2px 7px; border-radius:10px;
+      background:rgba(0,229,160,.12); color:var(--green);
+    }
+    .live-elapsed.warn  { background:rgba(255,159,67,.12); color:#ff9f43; }
+    .live-elapsed.alert { background:rgba(255,77,109,.12);  color:var(--red); animation:blink 1.1s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.45} }
+
+    .live-step-name { font-size:14px; font-weight:700; color:var(--text); margin-bottom:3px; }
+    .live-step-desc { font-size:11px; color:var(--text2); line-height:1.5; margin-bottom:10px; }
+
+    .live-bars { display:flex; flex-direction:column; gap:7px; }
+    .live-bar-row { display:flex; align-items:center; gap:10px; }
+    .live-bar-label { font-size:11px; color:var(--text2); width:76px; flex-shrink:0; }
+    .live-bar-track { flex:1; height:8px; background:var(--bg); border-radius:4px; overflow:hidden; }
+    .live-bar-fill  { height:100%; border-radius:4px; transition:width .5s ease; }
+    .live-bar-fill.audio   { background:linear-gradient(90deg,#6c63ff,#a78bfa); }
+    .live-bar-fill.visual  { background:linear-gradient(90deg,#ff9f43,#ffd32a); }
+    .live-bar-fill.done    { background:linear-gradient(90deg,var(--green),#00c98e); }
+    .live-bar-pct  { font-size:11px; color:var(--text); font-weight:600; min-width:36px; text-align:right; }
+    .live-bar-count { font-size:10px; color:var(--text2); min-width:48px; text-align:right; }
+    .live-bar-fail  { font-size:10px; color:var(--red); }
+
+    .warn-stuck { background:rgba(255,159,67,.08); border:1px solid rgba(255,159,67,.35); border-radius:5px; padding:5px 11px; font-size:11px; color:#ff9f43; margin-top:8px; }
 
     .error-box { background:rgba(255,77,109,.07); border:1px solid rgba(255,77,109,.25); border-radius:5px; padding:7px 11px; font-size:11px; color:var(--red); margin-top:9px; word-break:break-word; }
 
@@ -386,20 +411,32 @@ function fmtDur(secs) {
 }
 
 function renderPipeline(status) {
-  const ci = STAGE_IDX[status] ?? -1;
+  const ci    = STAGE_IDX[status] ?? -1;
+  const total = STAGES.length;
   const failed = status === 'failed';
-  const bars = STAGES.map((s,i) => {
-    const cls = (failed&&i===ci)?'failed':i<ci?'done':i===ci?'current':'';
-    return `<div class="stage ${cls}" title="${s.label}"></div>`;
+
+  const dots = STAGES.map((s,i) => {
+    let dotCls = '';
+    if (failed && i === ci) dotCls = 'failed';
+    else if (i < ci)        dotCls = 'done';
+    else if (i === ci)      dotCls = 'current';
+
+    const lineCls = i < ci ? 'done' : '';
+    const line    = i < total-1 ? `<div class="pc-line ${lineCls}"></div>` : '';
+    const num     = dotCls === 'done' ? '✓' : (i+1);
+    return `<div class="pc-step"><div class="pc-dot ${dotCls}" title="${s.label}">${num}</div>${line}</div>`;
   }).join('');
+
   const cur = STAGES[ci];
-  const pct = ci>=0 ? Math.round(ci/(STAGES.length-1)*100) : 0;
+  const pct = ci >= 0 ? Math.round(ci / (total-1) * 100) : 0;
+  const pctStr = status === 'complete' ? '100%' : status === 'failed' ? '—' : `${pct}%`;
+
   return `
-    <div>
-      <div class="pipeline-stages">${bars}</div>
-      <div class="pipeline-label">
-        <span class="stage-name">${cur?cur.icon+' '+cur.label:status}</span>
-        <span>${pct}%</span>
+    <div class="pipeline-wrap">
+      <div class="pipeline-circles">${dots}</div>
+      <div class="pipeline-foot">
+        <span class="cur-label">${cur ? cur.icon + ' ' + cur.label : status}</span>
+        <span>${pctStr}</span>
       </div>
     </div>`;
 }
@@ -411,16 +448,24 @@ function elapsedSince(isoStr) {
   return Math.floor(secs/3600) + 'h ' + Math.floor((secs%3600)/60) + 'm';
 }
 
+function elapsedClass(isoStr) {
+  const secs = Math.floor((Date.now() - new Date(isoStr)) / 1000);
+  if (secs > 480) return 'alert';
+  if (secs > 180) return 'warn';
+  return '';
+}
+
 function renderBar(label, ready, total, failed, colorClass) {
   if (total === 0) return '';
-  const pct = total > 0 ? Math.round(ready/total*100) : 0;
-  const fillClass = ready === total ? 'done' : colorClass;
-  const failBadge = failed > 0 ? `<span class="live-bar-fail">(${failed} błędów)</span>` : '';
+  const pct      = Math.round(ready / total * 100);
+  const fillCls  = ready === total ? 'done' : colorClass;
+  const failTxt  = failed > 0 ? `<span class="live-bar-fail">&nbsp;(${failed}✗)</span>` : '';
   return `
     <div class="live-bar-row">
       <div class="live-bar-label">${label}</div>
-      <div class="live-bar-track"><div class="live-bar-fill ${fillClass}" style="width:${pct}%"></div></div>
-      <div class="live-bar-count">${ready}/${total}${failBadge}</div>
+      <div class="live-bar-track"><div class="live-bar-fill ${fillCls}" style="width:${pct}%"></div></div>
+      <div class="live-bar-pct">${pct}%</div>
+      <div class="live-bar-count">${ready}/${total}${failTxt}</div>
     </div>`;
 }
 
@@ -428,24 +473,33 @@ function renderLiveProgress(mix) {
   const p = mix.progress;
   if (!p || mix.status === 'complete' || mix.status === 'failed' || mix.status === 'pending') return '';
 
-  const elapsed = elapsedSince(mix.updated_at);
+  const elapsed     = elapsedSince(mix.updated_at);
+  const elCls       = elapsedClass(mix.updated_at);
   const elapsedSecs = Math.floor((Date.now() - new Date(mix.updated_at)) / 1000);
-  const stuckWarning = elapsedSecs > 600
-    ? `<div class="warn-stuck">⚠ Ostatnia aktywność ${elapsed} temu — możliwe zawieszenie procesu</div>`
+
+  const stuckWarn = elapsedSecs > 600
+    ? `<div class="warn-stuck">⚠ Brak aktywności od ${elapsed} — możliwe zawieszenie workera</div>`
     : '';
 
-  const stemBar   = renderBar('🎵 Stemy',   p.stem_ready,   p.stem_total,   p.stem_failed,   'audio');
-  const visualBar = renderBar('🖼 Wizuale', p.visual_ready, p.visual_total, p.visual_failed, 'visual');
+  const stemBar   = renderBar('🎵 Stemy',    p.stem_ready,   p.stem_total,   p.stem_failed,   'audio');
+  const visualBar = renderBar('🖼️ Wizuale',  p.visual_ready, p.visual_total, p.visual_failed, 'visual');
+  const bars      = (stemBar || visualBar)
+    ? `<div class="live-bars">${stemBar}${visualBar}</div>` : '';
+
+  // Current step index display: step_index is 0-based; stages 0=pending,12=complete
+  const stepNum   = p.step_index >= 0 ? p.step_index : 0;
+  const stepOf    = STAGES.length - 1;  // 12 active steps (0=pending not counted)
 
   return `
     <div class="live-progress">
-      <div class="live-step-label">
-        ${esc(p.step_label)}
-        <span class="live-elapsed">⏱ ${elapsed}</span>
+      <div class="live-step-header">
+        <span class="live-step-krok">Krok ${stepNum} z ${stepOf}</span>
+        <span class="live-elapsed ${elCls}">⏱ ${elapsed}</span>
       </div>
+      <div class="live-step-name">${esc(p.step_label)}</div>
       <div class="live-step-desc">${esc(p.step_desc)}</div>
-      ${(stemBar || visualBar) ? `<div class="live-bars">${stemBar}${visualBar}</div>` : ''}
-      ${stuckWarning}
+      ${bars}
+      ${stuckWarn}
     </div>`;
 }
 
