@@ -53,9 +53,9 @@ class CSOStrategy(_Base):
 # ── Audio prompt batch ────────────────────────────────────────────────────────
 
 class StemPrompt(_Base):
-    """A single Gemini Lyria 3 prompt for one 30-second stem."""
+    """A single MusicGen prompt for one 30-second audio stem."""
     position:       int           # 0-indexed position in the mix
-    prompt_en:      str           # English prompt → Gemini Lyria 3
+    prompt_en:      str           # English prompt → MusicGen via Replicate
     transition_type: str          # "intro" | "build" | "drop" | "breakdown" | "outro"
     intensity:      float         = Field(ge=0.0, le=1.0)  # 0=chill, 1=peak
 
@@ -71,7 +71,7 @@ class AudioPromptBatch(_Base):
 class VisualPrompt(_Base):
     visual_type:   str   # maps to VisualType enum values
     aspect_ratio:  str   # "16:9" | "9:16"
-    prompt_en:     str   # English prompt → Gemini Nano Banana 2 / Veo
+    prompt_en:     str   # English prompt → DALL-E 3 (image) / FFmpeg Ken Burns (video)
 
 
 class VisualPromptBatch(_Base):

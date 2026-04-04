@@ -37,8 +37,8 @@ TASK_ROUTES = {
     "shared.tasks.definitions.run_cso_strategy":           {"queue": "orchestration"},
     "shared.tasks.definitions.generate_audio_prompts":     {"queue": "orchestration"},
     "shared.tasks.definitions.generate_visual_prompts":    {"queue": "orchestration"},
-    "shared.tasks.definitions.fetch_stems_from_gemini":    {"queue": "orchestration"},
-    "shared.tasks.definitions.fetch_visuals_from_gemini":  {"queue": "orchestration"},
+    "shared.tasks.definitions.fetch_audio_stems":           {"queue": "orchestration"},
+    "shared.tasks.definitions.fetch_visual_assets":         {"queue": "orchestration"},
     "shared.tasks.definitions.upload_to_youtube":          {"queue": "upload"},
     "shared.tasks.definitions.upload_to_tiktok":           {"queue": "upload"},
     # DSP tasks

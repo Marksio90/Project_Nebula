@@ -73,7 +73,7 @@ def load_and_analyse_stem(
     ----------
     file_path   : Path to the WAV file on disk.
     target_bpm  : The CSO-selected BPM for the mix. librosa is anchored to
-                  this value to correct Gemini's slight BPM drift.
+                  this value to correct MusicGen's slight BPM drift.
     position    : 0-indexed stem position in the mix (for logging).
     """
     log.debug("Analysing stem %04d: %s", position, file_path)

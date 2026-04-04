@@ -37,7 +37,6 @@ class Settings(BaseSettings):
 
     # ── AI APIs ───────────────────────────────────────────────────────────
     openai_api_key: str = Field(..., alias="OPENAI_API_KEY")
-    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
 
     # Replicate — used by ReplicateMusicGenProvider (default audio backend)
     replicate_api_token: str = Field(default="", alias="REPLICATE_API_TOKEN")
@@ -53,10 +52,10 @@ class Settings(BaseSettings):
     )
 
     # ── Media Provider Selection ──────────────────────────────────────────
-    # Swap providers without touching code — just change these env vars.
-    #   audio_provider : replicate (default) | gemini
-    #   image_provider : dalle3     (default) | gemini
-    #   video_provider : ffmpeg     (default) | gemini
+    # Production stack — change only if adding a new provider implementation.
+    #   audio_provider : replicate  → MusicGen via Replicate (~$0.008/stem)
+    #   image_provider : dalle3     → DALL-E 3 via OpenAI    (~$0.080/image)
+    #   video_provider : ffmpeg     → Ken Burns animation     (FREE, local)
     audio_provider: str = Field(default="replicate", alias="AUDIO_PROVIDER")
     image_provider: str = Field(default="dalle3",    alias="IMAGE_PROVIDER")
     video_provider: str = Field(default="ffmpeg",    alias="VIDEO_PROVIDER")
@@ -112,8 +111,8 @@ class Settings(BaseSettings):
     # Default same as llm_model — set to a stronger model if CSO quality suffers.
     llm_precise_model: str = Field(default="gpt-4o-mini", alias="LLM_PRECISE_MODEL")
 
-    # ── Gemini / Generation Limits ────────────────────────────────────────
-    stem_duration_seconds: int = 30              # Audio provider stem length (seconds)
+    # ── Generation Limits ─────────────────────────────────────────────────
+    stem_duration_seconds: int = 30              # Audio stem length in seconds
     max_stems_per_mix: int = 150                 # 150 × 30 s = 75 min max
     target_lufs: float = -14.0                  # Streaming loudness target
     true_peak_dbfs: float = -1.0                # True peak ceiling

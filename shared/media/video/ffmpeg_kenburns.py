@@ -4,10 +4,10 @@ shared/media/video/ffmpeg_kenburns.py
 VideoGenerator that creates loopable video clips from static images using
 FFmpeg's `zoompan` filter — the Ken Burns effect.
 
-Why this instead of Veo 2:
+Why FFmpeg Ken Burns (not a cloud video model):
   - Zero API cost — pure FFmpeg, runs locally inside the Docker container
   - Deterministic — same image + seed → same video every time
-  - No rate limits, no waitlists, works offline
+  - No rate limits, no waitlists, works fully offline
   - Produces polished, professional results that loop seamlessly
   - Full control over duration, speed, and animation style
 

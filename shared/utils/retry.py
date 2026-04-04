@@ -4,22 +4,20 @@ shared/utils/retry.py
 Tenacity retry strategies for Project Nebula API calls.
 
 Usage:
-    @retry_gemini_api
-    def call_lyria(prompt: str) -> bytes: ...
-
     @retry_openai_api
-    def call_gpt4o(messages: list) -> str: ...
+    def call_gpt(messages: list) -> str: ...
+
+    @retry_http
+    def download_file(url: str) -> bytes: ...
 ─────────────────────────────────────────────────────────────────────────────
 """
 
 import logging
-import random
 
 from tenacity import (
     RetryCallState,
     retry,
     retry_if_exception,
-    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
     wait_random_exponential,
@@ -39,17 +37,7 @@ def _log_retry_attempt(retry_state: RetryCallState) -> None:
     )
 
 
-# ── Gemini API (Lyria 3 / Nano Banana 2 / Veo) ────────────────────────────────
-# Gemini uses HTTP 429 (quota) and 503 (overload) — both warrant exponential backoff
-
-retry_gemini_api = retry(
-    reraise=True,
-    stop=stop_after_attempt(6),
-    wait=wait_random_exponential(multiplier=2, min=4, max=120),
-    before_sleep=_log_retry_attempt,
-)
-
-# ── OpenAI API (GPT-4o via CrewAI) ────────────────────────────────────────────
+# ── OpenAI API (GPT-4o-mini / GPT-4o via CrewAI) ─────────────────────────────
 
 # Phrases that identify billing quota exhaustion (as opposed to transient rate
 # limits).  Quota errors are permanent until the account is topped up — there is

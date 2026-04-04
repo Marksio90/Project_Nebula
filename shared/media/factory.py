@@ -5,15 +5,10 @@ Provider factory — returns the correct AudioGenerator, ImageGenerator, or
 VideoGenerator instance based on the AUDIO_PROVIDER / IMAGE_PROVIDER /
 VIDEO_PROVIDER environment variables.
 
-Default production stack (zero waitlists, zero extra setup):
+Production stack (zero waitlists, zero extra setup):
   AUDIO_PROVIDER=replicate   → ReplicateMusicGenProvider  (~$0.008/stem)
-  IMAGE_PROVIDER=dalle3      → DallE3Provider              (~$0.080/image)
-  VIDEO_PROVIDER=ffmpeg      → FFmpegKenBurnsProvider      (FREE, local)
-
-Future stack when Gemini experimental models reach GA:
-  AUDIO_PROVIDER=gemini      → GeminiLyriaProvider
-  IMAGE_PROVIDER=gemini      → GeminiImagenProvider
-  VIDEO_PROVIDER=gemini      → GeminiVeoProvider
+  IMAGE_PROVIDER=dalle3      → DallE3Provider              (~$0.080/image HD)
+  VIDEO_PROVIDER=ffmpeg      → FFmpegKenBurnsProvider      (FREE, local CPU)
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -28,38 +23,22 @@ log = logging.getLogger("nebula.media.factory")
 
 
 def get_audio_generator() -> AudioGenerator:
-    """
-    Return the configured AudioGenerator.
-
-    AUDIO_PROVIDER=replicate (default) → ReplicateMusicGenProvider
-    AUDIO_PROVIDER=gemini              → GeminiLyriaProvider
-    """
+    """Return the configured AudioGenerator. AUDIO_PROVIDER=replicate (default)."""
     settings = get_settings()
     provider = settings.audio_provider.lower()
 
     if provider == "replicate":
         from shared.media.audio.replicate_musicgen import ReplicateMusicGenProvider
-        log.debug("Audio provider: replicate/musicgen-stereo-large")
+        log.debug("Audio provider: replicate/musicgen")
         return ReplicateMusicGenProvider(api_token=settings.replicate_api_token)
 
-    if provider == "gemini":
-        from shared.media.audio.gemini_lyria import GeminiLyriaProvider
-        log.debug("Audio provider: gemini/lyria-3 (experimental)")
-        return GeminiLyriaProvider(api_key=settings.gemini_api_key)
-
     raise ValueError(
-        f"Unknown AUDIO_PROVIDER={provider!r}. "
-        f"Valid options: replicate, gemini"
+        f"Unknown AUDIO_PROVIDER={provider!r}. Valid options: replicate"
     )
 
 
 def get_image_generator() -> ImageGenerator:
-    """
-    Return the configured ImageGenerator.
-
-    IMAGE_PROVIDER=dalle3 (default) → DallE3Provider
-    IMAGE_PROVIDER=gemini           → GeminiImagenProvider
-    """
+    """Return the configured ImageGenerator. IMAGE_PROVIDER=dalle3 (default)."""
     settings = get_settings()
     provider = settings.image_provider.lower()
 
@@ -68,24 +47,13 @@ def get_image_generator() -> ImageGenerator:
         log.debug("Image provider: openai/dall-e-3")
         return DallE3Provider(api_key=settings.openai_api_key)
 
-    if provider == "gemini":
-        from shared.media.image.gemini_imagen import GeminiImagenProvider
-        log.debug("Image provider: gemini/imagen-3 (experimental)")
-        return GeminiImagenProvider(api_key=settings.gemini_api_key)
-
     raise ValueError(
-        f"Unknown IMAGE_PROVIDER={provider!r}. "
-        f"Valid options: dalle3, gemini"
+        f"Unknown IMAGE_PROVIDER={provider!r}. Valid options: dalle3"
     )
 
 
 def get_video_generator() -> VideoGenerator:
-    """
-    Return the configured VideoGenerator.
-
-    VIDEO_PROVIDER=ffmpeg (default) → FFmpegKenBurnsProvider (free, local)
-    VIDEO_PROVIDER=gemini           → GeminiVeoProvider
-    """
+    """Return the configured VideoGenerator. VIDEO_PROVIDER=ffmpeg (default)."""
     settings = get_settings()
     provider = settings.video_provider.lower()
 
@@ -94,12 +62,6 @@ def get_video_generator() -> VideoGenerator:
         log.debug("Video provider: ffmpeg/kenburns (local, zero cost)")
         return FFmpegKenBurnsProvider()
 
-    if provider == "gemini":
-        from shared.media.video.gemini_veo import GeminiVeoProvider
-        log.debug("Video provider: gemini/veo-2 (experimental)")
-        return GeminiVeoProvider(api_key=settings.gemini_api_key)
-
     raise ValueError(
-        f"Unknown VIDEO_PROVIDER={provider!r}. "
-        f"Valid options: ffmpeg, gemini"
+        f"Unknown VIDEO_PROVIDER={provider!r}. Valid options: ffmpeg"
     )

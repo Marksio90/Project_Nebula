@@ -8,12 +8,12 @@ Pipeline topology (Celery chain + chord):
   orchestrate_mix_pipeline
     └─ chain:
         1. run_cso_strategy            [orchestration]  CSO → BPM/subgenre/arc
-        2. generate_audio_prompts      [orchestration]  90+ Lyria 3 English prompts
-        3. fetch_stems_from_gemini     [orchestration]  Parallel Lyria 3 API calls
+        2. generate_audio_prompts      [orchestration]  batched audio stem prompts
+        3. fetch_audio_stems           [orchestration]  Replicate MusicGen API calls
         4. stitch_and_master_audio     [dsp]            librosa + pedalboard
         5. run_qa_audio_check          [dsp]            LUFS / true-peak verify
-        6. generate_visual_prompts     [orchestration]  Nano Banana 2 / Veo prompts
-        7. fetch_visuals_from_gemini   [orchestration]  Parallel visual API calls
+        6. generate_visual_prompts     [orchestration]  DALL-E 3 / FFmpeg prompts
+        7. fetch_visual_assets         [orchestration]  parallel visual generation
         8. render_full_video           [video]          FFmpeg 16:9 full mix
         9. slice_viral_shorts          [video]          3× 60s 9:16 RMS clips
        10. run_qa_video_check          [video]          Frame-drop detection
@@ -163,11 +163,11 @@ def orchestrate_mix_pipeline(
     pipeline = chain(
         run_cso_strategy.si(request_payload),
         generate_audio_prompts.s(),
-        fetch_stems_from_gemini.s(),
+        fetch_audio_stems.s(),
         stitch_and_master_audio.s(),
         run_qa_audio_check.s(),
         generate_visual_prompts.s(),
-        fetch_visuals_from_gemini.s(),
+        fetch_visual_assets.s(),
         render_full_video.s(),
         slice_viral_shorts.s(),
         run_qa_video_check.s(),
@@ -289,7 +289,7 @@ def generate_audio_prompts(self, strategy_dict: dict) -> dict:
             stem = Stem(
                 mix_id=strategy.mix_id,
                 position=p.position,
-                gemini_prompt=p.prompt_en,
+                prompt_en=p.prompt_en,
                 status=StemStatus.PENDING,
             )
             db.add(stem)
@@ -303,7 +303,7 @@ def generate_audio_prompts(self, strategy_dict: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 @celery_app.task(
-    name="shared.tasks.definitions.fetch_stems_from_gemini",
+    name="shared.tasks.definitions.fetch_audio_stems",
     bind=True,
     queue="orchestration",
     max_retries=5,
@@ -311,12 +311,12 @@ def generate_audio_prompts(self, strategy_dict: dict) -> dict:
     soft_time_limit=3600,    # 1-hour soft limit for batch generation
     time_limit=3900,
 )
-def fetch_stems_from_gemini(self, batch_dict: dict) -> dict:
+def fetch_audio_stems(self, batch_dict: dict) -> dict:
     """
-    Calls the configured audio provider (Replicate / Gemini) for each StemPrompt.
+    Calls Replicate MusicGen for each StemPrompt in the batch.
     Uses tenacity for per-stem retry with exponential backoff + jitter
-    to gracefully absorb API rate limits.
-    Stems are downloaded to STEMS_DIR/{mix_id}/{position:04d}.wav
+    to gracefully absorb API rate limits (~11s throttle between requests).
+    Stems are written as WAV to STEMS_DIR/{mix_id}/{position:04d}.wav
     """
     batch = AudioPromptBatch(**batch_dict)
     mix_id = batch.strategy.mix_id
@@ -501,9 +501,9 @@ def generate_visual_prompts(self, upstream: dict) -> dict:
     """
     Visual Prompt Engineer agent.
     Generates English prompts for:
-      - 1× 16:9 background image (Nano Banana 2)
-      - 3× 16:9 Veo video loops  (cinematic ambience)
-      - 1× 9:16 Short background  (Nano Banana 2)
+      - 1× 16:9 background image  (DALL-E 3)
+      - 3× 16:9 video loops       (DALL-E 3 image → FFmpeg Ken Burns animation)
+      - 1× 9:16 Short background  (DALL-E 3)
       - 3× 9:16 Short thumbnails  (one per viral clip)
     All prompts are in English.
     """
@@ -540,7 +540,7 @@ def generate_visual_prompts(self, upstream: dict) -> dict:
                 mix_id=mix_id,
                 visual_type=p.visual_type,
                 aspect_ratio=p.aspect_ratio,
-                gemini_prompt=p.prompt_en,
+                prompt_en=p.prompt_en,
                 status=VisualStatus.PENDING,
             )
             db.add(visual)
@@ -554,7 +554,7 @@ def generate_visual_prompts(self, upstream: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 @celery_app.task(
-    name="shared.tasks.definitions.fetch_visuals_from_gemini",
+    name="shared.tasks.definitions.fetch_visual_assets",
     bind=True,
     queue="orchestration",
     max_retries=4,
@@ -562,14 +562,13 @@ def generate_visual_prompts(self, upstream: dict) -> dict:
     soft_time_limit=1800,
     time_limit=1900,
 )
-def fetch_visuals_from_gemini(self, upstream: dict) -> dict:
+def fetch_visual_assets(self, upstream: dict) -> dict:
     """
-    Calls Gemini Nano Banana 2 (images) and Veo (video loops).
-    Downloads artefacts to VISUALS_DIR/{mix_id}/.
-    Tenacity handles per-request rate-limit backoff inside the agent.
+    Generates all visual assets via DALL-E 3 (images) and FFmpeg Ken Burns (video loops).
+    Writes artefacts to VISUALS_DIR/{mix_id}/.
     """
     mix_id = upstream["mix_id"]
-    log.info("🌐 Fetching visuals from Gemini: mix_id=%s", mix_id)
+    log.info("🎨 Generating visual assets: mix_id=%s", mix_id)
 
     try:
         from services.orchestrator.crew.agents import fetch_visuals_batch
@@ -890,8 +889,9 @@ def upload_to_tiktok(self, upstream: dict) -> dict:
             _update_mix_status(mix_id, MixStatus.COMPLETE)
             return {**upstream, "tiktok_uploads": [], "warning": str(exc)}
 
+    shorts_titles_pl = upstream.get("seo", {}).get("shorts_titles_pl") or []
     with get_sync_db() as db:
-        for r in results:
+        for i, r in enumerate(results):
             upload_record = PlatformUpload(
                 mix_id=mix_id,
                 platform=Platform.TIKTOK,
@@ -899,7 +899,7 @@ def upload_to_tiktok(self, upstream: dict) -> dict:
                 upload_status=UploadStatus.UPLOADED if r.status == "uploaded" else UploadStatus.FAILED,
                 platform_video_id=r.platform_video_id,
                 platform_video_url=r.platform_video_url,
-                title_pl=upstream.get("seo", {}).get("shorts_titles_pl", [""])[0],
+                title_pl=shorts_titles_pl[i] if i < len(shorts_titles_pl) else None,
                 tags_pl=upstream.get("seo", {}).get("tags_pl"),
                 error_message=r.error,
             )

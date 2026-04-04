@@ -46,7 +46,6 @@ x-common-env: &common-env
   REDIS_URL: redis://redis:6379/0
   OPENAI_API_KEY: ${OPENAI_API_KEY}
   REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN}
-  GEMINI_API_KEY: ${GEMINI_API_KEY}
   YOUTUBE_CLIENT_SECRETS_FILE: /secrets/youtube_client_secrets.json
   TIKTOK_API_KEY: ${TIKTOK_API_KEY}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
