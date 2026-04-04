@@ -187,7 +187,7 @@ def run_cso_agent(
 # 2. Audio Prompt Engineer
 # ─────────────────────────────────────────────────────────────────────────────
 
-AUDIO_PROMPT_BATCH_SIZE = 25  # Max stems per LLM call (~25 × 150 tokens ≈ 3 750 < 16 384)
+AUDIO_PROMPT_BATCH_SIZE = 20  # Reduced from 25: gives LLM more headroom to complete JSON arrays
 
 
 def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
