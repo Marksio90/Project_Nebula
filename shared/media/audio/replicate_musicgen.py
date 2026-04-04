@@ -37,11 +37,13 @@ DEFAULT_DURATION = 30
 _REPLICATE_REQUEST_DELAY_S = 11
 
 # Fallback slugs tried in order if the primary REPLICATE_MODEL 404s.
-# Override the whole list by setting REPLICATE_MODEL to a versioned slug
-# ("owner/model:sha256...") — those bypass all discovery logic.
+# The versioned slug below was auto-discovered 2026-04-04 and is the current
+# working MusicGen model on Replicate. If it ever 404s again, the provider
+# will re-discover automatically via _resolve_model().
 _CANDIDATE_SLUGS = [
-    "facebook/musicgen-stereo-large",
+    "meta/musicgen:671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
     "meta/musicgen",
+    "facebook/musicgen-stereo-large",
     "facebook/musicgen",
 ]
 
