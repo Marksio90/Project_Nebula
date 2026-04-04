@@ -123,15 +123,18 @@ def build_strategy_crew(
     qa_task = Task(
         description=(
             f"Review the CSO's strategy output for mix_id='{mix_id}'. "
+            "CRITICAL: Your ENTIRE response must be ONLY a raw JSON object — "
+            "no explanation, no prose, no markdown fences. Start with {{ end with }}. "
             "Verify: (1) the JSON is valid, (2) the bpm/subgenre/key combination "
             f"does NOT appear in this used list: {used_combinations_json}, "
             "(3) stem_count equals floor(requested_duration_minutes * 2) capped at 150. "
-            "If any check fails, provide the corrected JSON. If all checks pass, "
-            "output the original JSON unchanged."
+            "If any check fails, output the corrected JSON. If all checks pass, "
+            "output the original JSON unchanged — ONLY JSON, nothing else."
         ),
         expected_output=(
-            "The final, validated JSON strategy object — identical to input if valid, "
-            "or corrected if any issue was found."
+            "ONLY a raw JSON object with no surrounding text. "
+            "No explanation, no confirmation, no markdown fences. "
+            "Response must begin with { and end with }."
         ),
         agent=qa,
         context=[strategy_task],
@@ -309,16 +312,23 @@ def build_seo_crew(
 
     qa_task = Task(
         description=(
-            "Review the Polish SEO metadata output. CRITICAL CHECKS: "
+            "Review the Polish SEO metadata output. "
+            "CRITICAL: Your ENTIRE response must be ONLY a raw JSON object — "
+            "no explanation, no prose, no markdown fences. Start with {{ end with }}. "
+            "Checks: "
             "(1) title_pl, description_pl, tags_pl, chapters_pl, shorts_titles_pl "
             "are ALL in Polish — reject any English sentences in these fields, "
             "(2) title_pl is ≤ 100 characters, "
             "(3) exactly 3 items in shorts_titles_pl, "
             "(4) chapters_pl contains at least 5 entries with valid time_str format 'MM:SS', "
             "(5) the JSON structure matches the required schema exactly. "
-            "Output the corrected JSON or the original if valid."
+            "If valid: output original JSON unchanged. If corrected: output ONLY the corrected JSON."
         ),
-        expected_output="The final, validated JSON PolishSEOMetadata object.",
+        expected_output=(
+            "ONLY a raw JSON object with no surrounding text. "
+            "No explanation, no confirmation, no markdown fences. "
+            "Response must begin with { and end with }."
+        ),
         agent=qa,
         context=[seo_task],
     )

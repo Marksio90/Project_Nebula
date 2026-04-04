@@ -31,7 +31,7 @@ from sqlalchemy import select
 
 from services.video_worker.video.renderer import _run_ffmpeg, _select_codec
 from shared.config import get_settings
-from shared.db.models import Mix, Visual, VisualType
+from shared.db.models import Mix, Visual, VisualStatus, VisualType
 from shared.db.session import get_sync_db
 from shared.schemas.events import ViralShortResult, ViralSliceResult
 
@@ -63,7 +63,7 @@ def slice_viral_shorts_from_mix(mix_id: str) -> ViralSliceResult:
             select(Visual).where(
                 Visual.mix_id == mix_id,
                 Visual.aspect_ratio == "9:16",
-                Visual.status == "ready",
+                Visual.status == VisualStatus.READY,
             )
         ).scalars().all()
 

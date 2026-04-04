@@ -142,6 +142,23 @@
     .pipeline-label { display:flex; justify-content:space-between; font-size:11px; color:var(--text2); }
     .stage-name { color:var(--accent); font-weight:600; }
 
+    /* ── Live progress detail (active mixes only) ─── */
+    .live-progress { background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:10px 14px; margin-top:8px; font-size:12px; }
+    .live-step-label { font-weight:700; color:var(--text); margin-bottom:3px; display:flex; align-items:center; gap:8px; }
+    .live-step-desc  { color:var(--text2); font-size:11px; margin-bottom:8px; }
+    .live-bars { display:flex; flex-direction:column; gap:5px; }
+    .live-bar-row { display:flex; align-items:center; gap:8px; }
+    .live-bar-label { font-size:11px; color:var(--text2); width:70px; flex-shrink:0; }
+    .live-bar-track { flex:1; height:6px; background:var(--bg); border-radius:3px; overflow:hidden; }
+    .live-bar-fill  { height:100%; border-radius:3px; transition:width .4s ease; }
+    .live-bar-fill.audio   { background:var(--accent); }
+    .live-bar-fill.visual  { background:#ff9f43; }
+    .live-bar-fill.done    { background:var(--green); }
+    .live-bar-count { font-size:11px; color:var(--text); min-width:55px; text-align:right; }
+    .live-bar-fail  { font-size:10px; color:var(--red); margin-left:2px; }
+    .warn-stuck { background:rgba(255,159,67,.1); border:1px solid rgba(255,159,67,.4); border-radius:4px; padding:4px 10px; font-size:11px; color:#ff9f43; margin-top:6px; }
+    .live-elapsed { font-size:10px; color:var(--text2); margin-left:auto; }
+
     .error-box { background:rgba(255,77,109,.07); border:1px solid rgba(255,77,109,.25); border-radius:5px; padding:7px 11px; font-size:11px; color:var(--red); margin-top:9px; word-break:break-word; }
 
     .empty { text-align:center; padding:60px 20px; color:var(--text2); }
@@ -235,19 +252,19 @@
 <script>
 // ── Pipeline ──────────────────────────────────────────────────────────────
 const STAGES = [
-  {key:'pending',          label:'Pending',           icon:'⏳'},
-  {key:'strategising',     label:'CSO Strategy',      icon:'🎯'},
-  {key:'prompt_gen',       label:'Prompt Generation', icon:'✍️'},
-  {key:'fetching_stems',   label:'Fetching Stems',    icon:'🎵'},
-  {key:'fetching_visuals', label:'Fetching Visuals',  icon:'🖼️'},
-  {key:'stitching',        label:'Beat Stitching',    icon:'🔗'},
-  {key:'mastering',        label:'Mastering',         icon:'🎚️'},
-  {key:'qa_audio',         label:'QA Audio',          icon:'✅'},
-  {key:'rendering',        label:'Rendering Video',   icon:'🎬'},
-  {key:'slicing',          label:'Slicing Shorts',    icon:'✂️'},
-  {key:'qa_video',         label:'QA Video',          icon:'📺'},
-  {key:'uploading',        label:'Uploading',         icon:'☁️'},
-  {key:'complete',         label:'Complete',          icon:'🚀'},
+  {key:'pending',          label:'Oczekuje',              icon:'⏳'},
+  {key:'strategising',     label:'CSO Strategy',          icon:'🎯'},
+  {key:'prompt_gen',       label:'Prompty audio',         icon:'✍️'},
+  {key:'fetching_stems',   label:'Generowanie stemów',    icon:'🎵'},
+  {key:'stitching',        label:'Beat matching',         icon:'🔗'},
+  {key:'mastering',        label:'Mastering',             icon:'🎚️'},
+  {key:'qa_audio',         label:'QA Audio',              icon:'✅'},
+  {key:'fetching_visuals', label:'Wizuale DALL-E 3',      icon:'🖼️'},
+  {key:'rendering',        label:'Render video',          icon:'🎬'},
+  {key:'slicing',          label:'Cięcie Shortów',        icon:'✂️'},
+  {key:'qa_video',         label:'QA Video',              icon:'📺'},
+  {key:'uploading',        label:'Upload',                icon:'☁️'},
+  {key:'complete',         label:'Gotowe',                icon:'🚀'},
 ];
 const STAGE_IDX = Object.fromEntries(STAGES.map((s,i)=>[s.key,i]));
 
@@ -387,21 +404,66 @@ function renderPipeline(status) {
     </div>`;
 }
 
+function elapsedSince(isoStr) {
+  const secs = Math.floor((Date.now() - new Date(isoStr)) / 1000);
+  if (secs < 60)   return secs + 's';
+  if (secs < 3600) return Math.floor(secs/60) + 'm ' + (secs%60) + 's';
+  return Math.floor(secs/3600) + 'h ' + Math.floor((secs%3600)/60) + 'm';
+}
+
+function renderBar(label, ready, total, failed, colorClass) {
+  if (total === 0) return '';
+  const pct = total > 0 ? Math.round(ready/total*100) : 0;
+  const fillClass = ready === total ? 'done' : colorClass;
+  const failBadge = failed > 0 ? `<span class="live-bar-fail">(${failed} błędów)</span>` : '';
+  return `
+    <div class="live-bar-row">
+      <div class="live-bar-label">${label}</div>
+      <div class="live-bar-track"><div class="live-bar-fill ${fillClass}" style="width:${pct}%"></div></div>
+      <div class="live-bar-count">${ready}/${total}${failBadge}</div>
+    </div>`;
+}
+
+function renderLiveProgress(mix) {
+  const p = mix.progress;
+  if (!p || mix.status === 'complete' || mix.status === 'failed' || mix.status === 'pending') return '';
+
+  const elapsed = elapsedSince(mix.updated_at);
+  const elapsedSecs = Math.floor((Date.now() - new Date(mix.updated_at)) / 1000);
+  const stuckWarning = elapsedSecs > 600
+    ? `<div class="warn-stuck">⚠ Ostatnia aktywność ${elapsed} temu — możliwe zawieszenie procesu</div>`
+    : '';
+
+  const stemBar   = renderBar('🎵 Stemy',   p.stem_ready,   p.stem_total,   p.stem_failed,   'audio');
+  const visualBar = renderBar('🖼 Wizuale', p.visual_ready, p.visual_total, p.visual_failed, 'visual');
+
+  return `
+    <div class="live-progress">
+      <div class="live-step-label">
+        ${esc(p.step_label)}
+        <span class="live-elapsed">⏱ ${elapsed}</span>
+      </div>
+      <div class="live-step-desc">${esc(p.step_desc)}</div>
+      ${(stemBar || visualBar) ? `<div class="live-bars">${stemBar}${visualBar}</div>` : ''}
+      ${stuckWarning}
+    </div>`;
+}
+
 function renderAiChips(mix) {
   const chips = [];
-  if(mix.subgenre) chips.push(`Subgenre <span>${esc(mix.subgenre)}</span>`);
-  if(mix.bpm)      chips.push(`BPM <span>${mix.bpm}</span>`);
+  if(mix.subgenre)     chips.push(`Subgatunek <span>${esc(mix.subgenre)}</span>`);
+  if(mix.bpm)          chips.push(`BPM <span>${mix.bpm}</span>`);
+  if(mix.key_signature) chips.push(`Tonacja <span>${esc(mix.key_signature)}</span>`);
   const dur = fmtDur(mix.actual_duration_seconds);
-  if(dur)          chips.push(`Duration <span>${dur}</span>`);
+  if(dur)              chips.push(`Czas <span>${dur}</span>`);
   const reqDur = mix.requested_duration_minutes;
-  if(reqDur && !dur) chips.push(`Target <span>~${reqDur} min</span>`);
-  if(mix.qa_passed) chips.push(`QA <span style="color:var(--green)">✓</span>`);
+  if(reqDur && !dur)   chips.push(`Cel <span>~${reqDur} min</span>`);
+  if(mix.qa_passed)    chips.push(`QA <span style="color:var(--green)">✓ OK</span>`);
   if(!chips.length) return '';
   return `<div class="ai-chips">${chips.map(c=>`<div class="ai-chip">${c}</div>`).join('')}</div>`;
 }
 
 function renderCard(mix) {
-  // Title: prefer subgenre (AI chose it), fall back to style_hint (= genre), then generic
   const title = mix.subgenre || mix.style_hint || 'AI Selection';
   const dur   = fmtDur(mix.actual_duration_seconds) || `~${mix.requested_duration_minutes} min`;
 
@@ -428,6 +490,7 @@ function renderCard(mix) {
       </div>
       ${renderAiChips(mix)}
       ${renderPipeline(mix.status)}
+      ${renderLiveProgress(mix)}
       ${errBox}
     </div>`;
 }

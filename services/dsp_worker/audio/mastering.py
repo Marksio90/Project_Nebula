@@ -69,7 +69,7 @@ def _build_mastering_chain() -> Pedalboard:
         #    and snare transients in the 2–5 kHz range
         PeakFilter(cutoff_frequency_hz=3500.0, gain_db=1.5, q=0.8),
 
-        # 4. Air — restores top-end extension that Lyria sometimes soft-limits
+        # 4. Air — restores top-end extension that MusicGen sometimes soft-limits
         HighShelfFilter(cutoff_frequency_hz=14_000.0, gain_db=1.0),
 
         # 5. Glue compressor

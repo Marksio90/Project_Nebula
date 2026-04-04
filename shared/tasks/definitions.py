@@ -34,7 +34,8 @@ from typing import Any
 
 from celery import chain, chord, group, signature
 from celery.exceptions import MaxRetriesExceededError
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from shared.db.models import (
     BpmSubgenreRegistry,
@@ -238,6 +239,9 @@ def run_cso_strategy(self, request_payload: dict) -> dict:
                 subgenre=strategy.subgenre,
                 key_signature=strategy.key_signature,
                 stem_count=strategy.stem_count,
+                # Store CSO's rich style_description so downstream agents
+                # (Visual PE, SEO) get the musical brief, not just genre name.
+                style_hint=strategy.style_description,
                 status=MixStatus.PROMPT_GEN,
             )
         )
@@ -283,16 +287,31 @@ def generate_audio_prompts(self, strategy_dict: dict) -> dict:
             _mark_mix_failed(strategy.mix_id, f"Audio prompt generation failed: {exc}")
             raise
 
-    # Persist Stem rows (status=PENDING)
+    # Persist Stem rows — upsert to handle Celery task retries safely.
+    # INSERT on new rows; UPDATE prompt_en + reset to PENDING on conflict
+    # (unique constraint uq_stem_mix_position), but leave READY stems untouched.
     with get_sync_db() as db:
         for p in batch.prompts:
-            stem = Stem(
-                mix_id=strategy.mix_id,
-                position=p.position,
-                prompt_en=p.prompt_en,
-                status=StemStatus.PENDING,
+            stmt = (
+                pg_insert(Stem)
+                .values(
+                    id=str(__import__("uuid").uuid4()),
+                    mix_id=strategy.mix_id,
+                    position=p.position,
+                    prompt_en=p.prompt_en,
+                    status=StemStatus.PENDING.value,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_stem_mix_position",
+                    set_=dict(
+                        prompt_en=p.prompt_en,
+                        status=StemStatus.PENDING.value,
+                        error_message=None,
+                    ),
+                    where=Stem.__table__.c.status != StemStatus.READY.value,
+                )
             )
-            db.add(stem)
+            db.execute(stmt)
 
     log.info("✅ Audio prompts generated: %d stems", len(batch.prompts))
     return batch.model_dump()
@@ -534,7 +553,15 @@ def generate_visual_prompts(self, upstream: dict) -> dict:
             _mark_mix_failed(mix_id, f"Visual prompt generation failed: {exc}")
             raise
 
+    # Delete non-READY visual rows first to prevent duplicates on Celery retry.
+    # READY visuals (already generated) are preserved so we don't re-spend DALL-E credits.
     with get_sync_db() as db:
+        db.execute(
+            delete(Visual).where(
+                Visual.mix_id == mix_id,
+                Visual.status.in_([VisualStatus.PENDING, VisualStatus.FAILED]),
+            )
+        )
         for p in batch.prompts:
             visual = Visual(
                 mix_id=mix_id,
@@ -604,7 +631,7 @@ def render_full_video(self, upstream: dict) -> dict:
     """
     Video Worker: FFmpeg hardware-accelerated renderer.
     Composites the mastered audio with:
-      - Seamlessly looped Veo video backgrounds
+      - Seamlessly looped Ken Burns animated backgrounds
       - Dynamic audio spectrum analyser overlay (complex filtergraph)
       - Chapter title overlays timed to the musical arc
     Output: EXPORTS_DIR/{mix_id}/full_mix.mp4  (3840×2160 or 1920×1080)
@@ -675,6 +702,9 @@ def slice_viral_shorts(self, upstream: dict) -> dict:
             raise
 
     with get_sync_db() as db:
+        # Delete any existing viral shorts for this mix before inserting
+        # (handles Celery retry after warm shutdown — acks_late=True)
+        db.execute(delete(ViralShort).where(ViralShort.mix_id == mix_id))
         for s in result.shorts:
             short = ViralShort(
                 id=s.short_id,

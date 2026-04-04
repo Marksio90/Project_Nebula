@@ -176,6 +176,38 @@ class PolishSEOMetadata(_Base):
     chapters_pl:       list[ChapterMarker]   # Timestamp chapter markers
     shorts_titles_pl:  list[str]             # 3 titles, one per viral short
 
+    @field_validator("title_pl")
+    @classmethod
+    def _cap_title(cls, v: str) -> str:
+        return v[:100]
+
+    @field_validator("description_pl")
+    @classmethod
+    def _cap_description(cls, v: str) -> str:
+        return v[:5000]
+
+    @field_validator("shorts_titles_pl")
+    @classmethod
+    def _cap_shorts_titles(cls, v: list[str]) -> list[str]:
+        # Ensure exactly 3 entries, each ≤ 80 chars
+        titles = [t[:80] for t in v[:3]]
+        while len(titles) < 3:
+            titles.append(titles[0] if titles else "")
+        return titles
+
+    @field_validator("tags_pl")
+    @classmethod
+    def _cap_tags(cls, v: list[str]) -> list[str]:
+        # Trim so total tag character count doesn't exceed 500
+        result: list[str] = []
+        total = 0
+        for tag in v:
+            if total + len(tag) + 1 > 500:
+                break
+            result.append(tag)
+            total += len(tag) + 1
+        return result
+
 
 # ── Upload result ─────────────────────────────────────────────────────────────
 

@@ -26,7 +26,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from shared.config import get_settings
-from shared.db.models import Mix, PlatformUpload, Visual, VisualType
+from shared.db.models import Mix, PlatformUpload, Visual, VisualStatus, VisualType
 from shared.db.session import get_sync_db
 from shared.schemas.events import VideoQAResult, VideoRenderResult
 
@@ -59,7 +59,7 @@ def render_full_mix_video(mix_id: str) -> VideoRenderResult:
             select(Visual).where(
                 Visual.mix_id == mix_id,
                 Visual.aspect_ratio == "16:9",
-                Visual.status.in_(["ready"]),
+                Visual.status == VisualStatus.READY,
             )
         ).scalars().all()
         chapters = db.execute(
@@ -157,7 +157,9 @@ def run_video_qa(mix_id: str) -> VideoQAResult:
             v_duration  = float(v_stream.get("duration", 0))
             expected_frames = int(v_duration * fps)
 
-            if expected_frames > 0:
+            # nb_frames is not always reported by ffprobe for H.264 streams
+            # without -count_packets — skip frame drop check if unavailable
+            if expected_frames > 0 and nb_frames > 0:
                 frame_drop_rate = max(0.0, (expected_frames - nb_frames) / expected_frames)
                 if frame_drop_rate > 0.005:  # > 0.5% drop rate
                     issues.append(
@@ -292,6 +294,24 @@ def _build_full_mix_filtergraph(
     return fg, input_args, map_args
 
 
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",                      # macOS
+    "C:\\Windows\\Fonts\\arialbd.ttf",                          # Windows
+]
+
+
+def _find_font() -> str | None:
+    """Return the first available bold font for FFmpeg drawtext, or None."""
+    for p in _FONT_CANDIDATES:
+        if Path(p).exists():
+            return p
+    return None
+
+
 def _append_chapter_drawtext(
     fg_parts: list[str],
     chapters_pl: list,
@@ -308,7 +328,11 @@ def _append_chapter_drawtext(
         fg_parts.append(f"{input_label}copy[vout]")
         return "[vout]"
 
-    font_path   = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font_path = _find_font()
+    if font_path is None:
+        log.warning("No font found for drawtext — skipping chapter overlays")
+        fg_parts.append(f"{input_label}copy[vout]")
+        return "[vout]"
     current_in  = input_label
     title_y     = int(height * 0.08)   # 8% from top
 
