@@ -294,6 +294,24 @@ def _build_full_mix_filtergraph(
     return fg, input_args, map_args
 
 
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",                      # macOS
+    "C:\\Windows\\Fonts\\arialbd.ttf",                          # Windows
+]
+
+
+def _find_font() -> str | None:
+    """Return the first available bold font for FFmpeg drawtext, or None."""
+    for p in _FONT_CANDIDATES:
+        if Path(p).exists():
+            return p
+    return None
+
+
 def _append_chapter_drawtext(
     fg_parts: list[str],
     chapters_pl: list,
@@ -310,7 +328,11 @@ def _append_chapter_drawtext(
         fg_parts.append(f"{input_label}copy[vout]")
         return "[vout]"
 
-    font_path   = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font_path = _find_font()
+    if font_path is None:
+        log.warning("No font found for drawtext — skipping chapter overlays")
+        fg_parts.append(f"{input_label}copy[vout]")
+        return "[vout]"
     current_in  = input_label
     title_y     = int(height * 0.08)   # 8% from top
 

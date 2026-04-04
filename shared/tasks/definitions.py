@@ -239,6 +239,9 @@ def run_cso_strategy(self, request_payload: dict) -> dict:
                 subgenre=strategy.subgenre,
                 key_signature=strategy.key_signature,
                 stem_count=strategy.stem_count,
+                # Store CSO's rich style_description so downstream agents
+                # (Visual PE, SEO) get the musical brief, not just genre name.
+                style_hint=strategy.style_description,
                 status=MixStatus.PROMPT_GEN,
             )
         )
