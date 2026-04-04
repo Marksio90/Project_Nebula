@@ -68,14 +68,17 @@ def _parse_crew_json(raw_output: str, schema_hint: str = "") -> dict:
     """
     Extract a JSON object from a CrewAI agent's raw string output.
 
-    Handles three common agent output patterns:
-      1. Bare JSON                     → parse directly
-      2. ```json\\n{...}\\n```          → strip fences, parse
-      3. Prose text + ```json\\n{...}  → extract the code block, parse
+    Handles all common agent output patterns:
+      1. Bare JSON                          → parse directly
+      2. ```json\\n{...}\\n```              → strip fences, parse
+      3. Prose text + ```json\\n{...}       → extract code block, parse
+      4. JSON followed by prose/validation  → raw_decode stops at JSON end
+      5. Prose then JSON then prose         → scan for {/[ and raw_decode
     """
     import re
 
     text = raw_output.strip()
+    decoder = json.JSONDecoder()
 
     # Pattern 1: try to parse as-is first (fast path)
     try:
@@ -92,13 +95,16 @@ def _parse_crew_json(raw_output: str, schema_hint: str = "") -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Pattern 4: find the first { or [ and try from there
+    # Pattern 4 & 5: scan for the first { or [ and use raw_decode so
+    # trailing prose (e.g. QA validation text) is ignored completely.
     for i, ch in enumerate(text):
         if ch in ("{", "["):
             try:
-                return json.loads(text[i:])
+                obj, _ = decoder.raw_decode(text, i)
+                if isinstance(obj, (dict, list)):
+                    return obj
             except json.JSONDecodeError:
-                break
+                continue
 
     log.error("JSON parse error in crew output (%s)\nRaw: %.500s", schema_hint, raw_output)
     raise ValueError(f"Agent returned invalid JSON for {schema_hint}")

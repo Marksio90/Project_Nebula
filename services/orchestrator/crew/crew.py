@@ -198,11 +198,12 @@ def build_audio_prompt_crew(
             arc_outro_start=arc_outro_start,
             total_stems_minus_1=total_stems - 1,
         ),
-        expected_output=task_cfg["expected_output"].format(
-            mix_id=mix_id,
-            batch_size=batch_size,
-            position_start=position_start,
-            position_end_inclusive=position_end_inclusive,
+        expected_output=(
+            f"A valid JSON object with EXACTLY {batch_size} entries in 'prompts'. "
+            f"Each entry: position (integer, sequential from {position_start} to "
+            f"{position_end_inclusive}), prompt_en (40-80 word English string), "
+            "transition_type (intro|build|drop|breakdown|peak|outro), "
+            "intensity (float 0.0-1.0). The 'mix_id' field must be present."
         ),
         agent=audio_pe,
     )
