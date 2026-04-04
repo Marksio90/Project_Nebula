@@ -61,6 +61,8 @@ audio_prompt_task:
 
     Generate EXACTLY {batch_size} audio stem prompts for positions {position_start}
     through {position_end_inclusive} (0-indexed, inclusive on both ends).
+    IMPORTANT: Count to {batch_size} before you start writing. You MUST output
+    EXACTLY {batch_size} items — not {batch_size_minus_1}, not {batch_size_plus_1}.
 
     Arc context: stems 0–{arc_intro_end} are intro/build, stems {arc_peak_start}–{arc_peak_end}
     are peak energy, stems {arc_outro_start}–{total_stems_minus_1} are breakdown/outro.
@@ -68,8 +70,8 @@ audio_prompt_task:
 
     Rules for every prompt:
     1. English only.
-    2. 40-80 words. Include: exact BPM, drum pattern type, bassline type,
-       atmosphere descriptor, energy level phrase.
+    2. 30-50 words MAXIMUM. Include: exact BPM, drum pattern type, bassline type,
+       one atmosphere word, energy phrase. Be concise — every word counts.
     3. Drum pattern: amen break / jungle step / half-time / rolling / four-on-floor
     4. Bassline: Reese / Neuro / Liquid / Rollers / wobble / sub-only
     5. Energy level phrase: "building tension" / "full drop" / "breakdown" / "peak energy" / "gradual outro"
