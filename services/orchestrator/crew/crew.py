@@ -55,14 +55,34 @@ def _get_llm() -> LLM:
 
 def _get_precise_llm() -> LLM:
     """
-    Structured-output LLM for CSO strategy, QA, and SEO tasks.
+    Structured-output LLM for CSO strategy and QA agents.
     Model controlled by LLM_PRECISE_MODEL env var (default: gpt-4o-mini).
-    Low temperature + high token budget for reliable JSON + Polish copy.
+    Low temperature — tasks are pure JSON logic, no creative writing needed.
     """
     return LLM(
         model=settings.llm_precise_model,
         api_key=settings.openai_api_key,
         temperature=0.2,
+        max_tokens=16_384,
+    )
+
+
+def _get_seo_llm() -> LLM:
+    """
+    High-quality LLM exclusively for the Polish SEO agent.
+    Model controlled by LLM_SEO_MODEL env var (default: gpt-4o).
+
+    Why gpt-4o here and mini everywhere else:
+      - This is the ONLY output the audience ever sees (YouTube title, description, TikTok)
+      - Polish viral copywriting, emotional hooks, and SEO keyword placement
+        are qualitatively better with a frontier model
+      - Cost impact is minimal: 1 call/mix ≈ $0.025 vs $0.001 with mini
+      - Temperature 0.75 for more creative, less formulaic titles
+    """
+    return LLM(
+        model=settings.llm_seo_model,
+        api_key=settings.openai_api_key,
+        temperature=0.75,
         max_tokens=16_384,
     )
 
@@ -276,8 +296,8 @@ def build_seo_crew(
     # Estimate chapters: 1 per 5 minutes, minimum 5
     chapter_count = max(5, duration_minutes // 5)
 
-    seo = _make_agent("polish_seo_agent", llm=_get_llm())
-    qa  = _make_agent("qa_agent", llm=_get_precise_llm())
+    seo = _make_agent("polish_seo_agent", llm=_get_seo_llm())    # gpt-4o: user-facing copy
+    qa  = _make_agent("qa_agent",         llm=_get_precise_llm())  # gpt-4o-mini: JSON validation
 
     seo_task = Task(
         description=task_cfg["description"].format(

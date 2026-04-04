@@ -239,9 +239,11 @@ def run_cso_strategy(self, request_payload: dict) -> dict:
                 subgenre=strategy.subgenre,
                 key_signature=strategy.key_signature,
                 stem_count=strategy.stem_count,
-                # Store CSO's rich style_description so downstream agents
-                # (Visual PE, SEO) get the musical brief, not just genre name.
+                # CSO's style_description → used by Visual PE and SEO as musical brief
                 style_hint=strategy.style_description,
+                # transition_arc → stored so renderer can generate chapter overlays
+                # at step 8, before the Polish SEO agent runs at step 11
+                transition_arc=strategy.transition_arc,
                 status=MixStatus.PROMPT_GEN,
             )
         )
@@ -489,7 +491,15 @@ def run_qa_audio_check(self, stitch_result: dict) -> dict:
 
     if not qa.passed:
         issues_str = "; ".join(qa.issues)
-        log.warning("⚠ QA audio FAIL (attempt %d): %s", self.request.retries + 1, issues_str)
+        log.warning("⚠ QA audio FAIL (attempt %d): %s — re-normalising before retry",
+                    self.request.retries + 1, issues_str)
+        try:
+            # Re-apply LUFS normalisation + hard clip in-place so the retry
+            # checks a corrected file, not the same file that just failed.
+            from services.dsp_worker.audio.mastering import renormalize_audio_file
+            renormalize_audio_file(result.mastered_audio_path)
+        except Exception as renorm_exc:
+            log.error("Re-normalisation failed: %s", renorm_exc)
         try:
             raise self.retry(
                 exc=ValueError(f"Audio QA failed: {issues_str}"),
@@ -860,22 +870,30 @@ def upload_to_youtube(self, upstream: dict) -> dict:
             _mark_mix_failed(mix_id, f"YouTube upload failed after retries: {exc}")
             raise
 
+    seo_data = upstream.get("seo", {})
     with get_sync_db() as db:
+        # Delete any pre-existing upload records for this mix+platform so that
+        # Celery retries (acks_late=True) don't accumulate duplicate rows.
+        db.execute(
+            delete(PlatformUpload).where(
+                PlatformUpload.mix_id == mix_id,
+                PlatformUpload.platform == Platform.YOUTUBE,
+            )
+        )
         for r in results:
-            upload_record = PlatformUpload(
+            db.add(PlatformUpload(
                 mix_id=mix_id,
                 platform=Platform.YOUTUBE,
                 content_type=r.content_type,
                 upload_status=UploadStatus.UPLOADED if r.status == "uploaded" else UploadStatus.FAILED,
                 platform_video_id=r.platform_video_id,
                 platform_video_url=r.platform_video_url,
-                title_pl=upstream.get("seo", {}).get("title_pl"),
-                description_pl=upstream.get("seo", {}).get("description_pl"),
-                tags_pl=upstream.get("seo", {}).get("tags_pl"),
-                chapters_pl=upstream.get("seo", {}).get("chapters_pl"),
+                title_pl=seo_data.get("title_pl"),
+                description_pl=seo_data.get("description_pl"),
+                tags_pl=seo_data.get("tags_pl"),
+                chapters_pl=seo_data.get("chapters_pl"),
                 error_message=r.error,
-            )
-            db.add(upload_record)
+            ))
 
     log.info("✅ YouTube uploads: %d completed", len(results))
     return {**upstream, "youtube_uploads": [r.model_dump() for r in results]}
@@ -919,10 +937,18 @@ def upload_to_tiktok(self, upstream: dict) -> dict:
             _update_mix_status(mix_id, MixStatus.COMPLETE)
             return {**upstream, "tiktok_uploads": [], "warning": str(exc)}
 
-    shorts_titles_pl = upstream.get("seo", {}).get("shorts_titles_pl") or []
+    seo_data        = upstream.get("seo", {})
+    shorts_titles_pl = seo_data.get("shorts_titles_pl") or []
     with get_sync_db() as db:
+        # Delete pre-existing TikTok upload records before inserting (idempotent retry)
+        db.execute(
+            delete(PlatformUpload).where(
+                PlatformUpload.mix_id == mix_id,
+                PlatformUpload.platform == Platform.TIKTOK,
+            )
+        )
         for i, r in enumerate(results):
-            upload_record = PlatformUpload(
+            db.add(PlatformUpload(
                 mix_id=mix_id,
                 platform=Platform.TIKTOK,
                 content_type=r.content_type,
@@ -930,10 +956,9 @@ def upload_to_tiktok(self, upstream: dict) -> dict:
                 platform_video_id=r.platform_video_id,
                 platform_video_url=r.platform_video_url,
                 title_pl=shorts_titles_pl[i] if i < len(shorts_titles_pl) else None,
-                tags_pl=upstream.get("seo", {}).get("tags_pl"),
+                tags_pl=seo_data.get("tags_pl"),
                 error_message=r.error,
-            )
-            db.add(upload_record)
+            ))
 
         # Mark the entire pipeline complete
         db.execute(update(Mix).where(Mix.id == mix_id).values(status=MixStatus.COMPLETE))

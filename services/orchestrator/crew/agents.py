@@ -188,6 +188,81 @@ def _validate_audio_prompts(
     )
 
 
+_VALID_VISUAL_TYPES   = {"background_image", "video_loop", "thumbnail", "short_background", "short_thumbnail"}
+_VALID_ASPECT_RATIOS  = {"16:9", "9:16"}
+# Minimum unique visual types required — one of each kind ensures the pipeline
+# has enough assets for the renderer and shorts slicer.
+_MIN_VISUAL_PROMPTS   = 5
+
+
+def _validate_visual_prompts(prompts_raw: list, mix_id: str) -> None:
+    """
+    Python-level validation of Visual PE output — mirrors _validate_audio_prompts.
+
+    Checks:
+      1. At least _MIN_VISUAL_PROMPTS returned
+      2. Each visual_type is a known enum value
+      3. Each aspect_ratio is "16:9" or "9:16" and is consistent with visual_type
+      4. Each prompt_en is non-empty and reasonably long (≥ 15 words)
+      5. At least one of each required visual_type is present
+    Raises ValueError so the @retry_openai_api decorator retries the whole call.
+    """
+    if not prompts_raw:
+        raise ValueError(f"Visual PE returned 0 prompts for mix {mix_id}")
+    if len(prompts_raw) < _MIN_VISUAL_PROMPTS:
+        raise ValueError(
+            f"Visual PE returned {len(prompts_raw)}/{_MIN_VISUAL_PROMPTS} prompts "
+            f"for mix {mix_id} — LLM truncated output"
+        )
+
+    seen_types: set[str] = set()
+    required_types = {"background_image", "thumbnail", "short_background", "short_thumbnail"}
+
+    for p in prompts_raw:
+        vt = str(p.get("visual_type", "")).strip().lower()
+        if vt not in _VALID_VISUAL_TYPES:
+            raise ValueError(
+                f"Invalid visual_type '{vt}' in Visual PE output for mix {mix_id} "
+                f"— must be one of {_VALID_VISUAL_TYPES}"
+            )
+        seen_types.add(vt)
+
+        ar = str(p.get("aspect_ratio", "")).strip()
+        if ar not in _VALID_ASPECT_RATIOS:
+            raise ValueError(
+                f"Invalid aspect_ratio '{ar}' for visual_type '{vt}' in mix {mix_id}"
+            )
+
+        # Consistency: 9:16 types must have 9:16 ratio and vice versa
+        is_vertical = vt in {"short_background", "short_thumbnail"}
+        if is_vertical and ar != "9:16":
+            raise ValueError(
+                f"visual_type '{vt}' must have aspect_ratio '9:16', got '{ar}' — mix {mix_id}"
+            )
+        if not is_vertical and vt != "video_loop" and ar != "16:9":
+            raise ValueError(
+                f"visual_type '{vt}' must have aspect_ratio '16:9', got '{ar}' — mix {mix_id}"
+            )
+
+        prompt_text = str(p.get("prompt_en", "")).strip()
+        if not prompt_text:
+            raise ValueError(f"Empty prompt_en for visual_type '{vt}' in mix {mix_id}")
+        word_count = len(prompt_text.split())
+        if word_count < 10:
+            raise ValueError(
+                f"prompt_en too short ({word_count} words) for visual_type '{vt}' in mix {mix_id} "
+                f"— expected ≥ 10 words"
+            )
+
+    missing = required_types - seen_types
+    if missing:
+        raise ValueError(
+            f"Visual PE missing required visual types {missing} for mix {mix_id}"
+        )
+
+    log.debug("Visual prompts validation OK: %d assets, types=%s", len(prompts_raw), seen_types)
+
+
 def _stems_dir(mix_id: str) -> Path:
     p = Path(settings.stems_dir) / mix_id
     p.mkdir(parents=True, exist_ok=True)
@@ -462,8 +537,11 @@ def run_visual_prompt_engineer(
     data = _parse_crew_json(raw, "VisualPromptBatch")
     data["mix_id"] = mix_id
 
-    prompts = [VisualPrompt(**p) for p in data.get("prompts", [])]
-    log.info("Visual prompts generated: %d assets for mix %s", len(prompts), mix_id)
+    prompts_raw = data.get("prompts", [])
+    _validate_visual_prompts(prompts_raw, mix_id)
+
+    prompts = [VisualPrompt(**p) for p in prompts_raw]
+    log.info("Visual prompts validated: %d assets for mix %s", len(prompts), mix_id)
     return VisualPromptBatch(mix_id=mix_id, prompts=prompts)
 
 
