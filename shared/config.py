@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     #   meta/musicgen  — newest namespace
     #   facebook/musicgen-stereo-large  — original (may be archived)
     replicate_model: str = Field(
-        default="meta/musicgen",
+        default="facebook/musicgen-stereo-large",
         alias="REPLICATE_MODEL",
     )
 

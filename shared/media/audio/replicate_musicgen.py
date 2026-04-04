@@ -1,18 +1,16 @@
 """
 shared/media/audio/replicate_musicgen.py
 ─────────────────────────────────────────────────────────────────────────────
-AudioGenerator backed by Meta's MusicGen Stereo Large via Replicate API.
+AudioGenerator backed by Meta's MusicGen via Replicate API.
 
-Model:  facebook/musicgen-stereo-large
-Cost:   ~$0.008 per 30-second stem (as of Q1 2026)
-Docs:   https://replicate.com/facebook/musicgen-stereo-large
+Model selection (in priority order):
+  1. REPLICATE_MODEL env var (default: "facebook/musicgen-stereo-large")
+  2. Auto-fallback to other known MusicGen slugs if the primary 404s
 
-Why MusicGen Stereo Large:
-  - Stereo output — essential for a professional DJ mix
-  - Publicly available, stable API, no waitlist
-  - Excellent prompt following for genre/BPM instructions
-  - 30-second outputs at 44.1 kHz stereo WAV
-  - ~3–8s generation time per stem
+Why version pinning matters:
+  replicate.run("owner/model") requires a "deployment" on Replicate.
+  replicate.run("owner/model:sha256...") always works if the version exists.
+  This provider automatically resolves the latest version hash on startup.
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -32,25 +30,27 @@ from shared.utils.retry import retry_http
 
 log = logging.getLogger("nebula.media.audio.replicate")
 
-# Model ID is configurable via REPLICATE_MODEL env var (see shared/config.py).
-# The default is "meta/musicgen" — verify the current model at:
-# https://replicate.com/explore?category=audio
-# If you get 404 errors, update REPLICATE_MODEL in your .env file.
 TARGET_SR        = 44_100
 DEFAULT_DURATION = 30
 
-# Replicate free-tier / low-credit accounts are limited to 6 predictions/min
-# (burst=1).  We wait this many seconds between requests to stay under the
-# limit.  At paid tier (>$5 balance) the limit is much higher but the sleep
-# is short enough to be harmless.
+# Replicate free-tier: ~6 predictions/min. 11s sleep keeps us safely under.
 _REPLICATE_REQUEST_DELAY_S = 11
+
+# Fallback slugs tried in order if the primary REPLICATE_MODEL 404s.
+# Override the whole list by setting REPLICATE_MODEL to a versioned slug
+# ("owner/model:sha256...") — those bypass all discovery logic.
+_CANDIDATE_SLUGS = [
+    "facebook/musicgen-stereo-large",
+    "meta/musicgen",
+    "facebook/musicgen",
+]
 
 
 class ReplicateMusicGenProvider(AudioGenerator):
     """
     Generates 30-second stereo music stems via the Replicate API.
-    Uses the `replicate` Python SDK for the API call and httpx for
-    the file download — both wrapped with tenacity retries.
+    Auto-resolves the model slug to a pinned version hash on first use
+    so 404 "model not found" errors are caught at startup, not mid-pipeline.
     """
 
     def __init__(self, api_token: str) -> None:
@@ -58,12 +58,61 @@ class ReplicateMusicGenProvider(AudioGenerator):
             raise ValueError("REPLICATE_API_TOKEN is required for ReplicateMusicGenProvider")
         os.environ["REPLICATE_API_TOKEN"] = api_token
         self._api_token = api_token
-        self._model = get_settings().replicate_model
-        log.info("ReplicateMusicGenProvider: model=%s", self._model)
+        configured = get_settings().replicate_model
+        self._model = self._resolve_model(configured)
+        log.info("ReplicateMusicGenProvider ready: model=%s", self._model)
+
+    # ── Model resolution ──────────────────────────────────────────────────────
+
+    def _resolve_model(self, configured_slug: str) -> str:
+        """
+        Resolve a model slug to a pinned "owner/model:version_hash" reference.
+
+        Strategy:
+          1. If the slug already contains ":" it is already versioned — use as-is.
+          2. Otherwise query the Replicate API for the model's latest_version.id.
+          3. If the configured slug 404s, try each slug in _CANDIDATE_SLUGS.
+          4. If nothing works, return the slug as-is (will fail loudly on first use).
+        """
+        import replicate as _r
+
+        # Build the ordered list: configured slug first, then fallbacks
+        candidates = [configured_slug] + [s for s in _CANDIDATE_SLUGS if s != configured_slug]
+
+        for slug in candidates:
+            # Already versioned — trust the operator
+            if ":" in slug:
+                log.info("Model slug already versioned: %s", slug)
+                return slug
+
+            try:
+                model_obj = _r.models.get(slug)
+                latest = model_obj.latest_version
+                if latest:
+                    versioned = f"{slug}:{latest.id}"
+                    log.info("Resolved %s → %s", slug, versioned)
+                    return versioned
+                else:
+                    # Model exists but has no public versions — try it unversioned
+                    log.warning("Model %s has no public version — using slug", slug)
+                    return slug
+            except Exception as exc:
+                log.warning("Model %s unavailable (%s) — trying next candidate", slug, exc)
+                continue
+
+        log.error(
+            "No working Replicate model found. Tried: %s\n"
+            "Fix: set REPLICATE_MODEL in .env to a valid slug from "
+            "https://replicate.com/explore?category=audio",
+            candidates,
+        )
+        return configured_slug  # Will raise on first prediction with a clear message
+
+    # ── Stem generation ───────────────────────────────────────────────────────
 
     @property
     def provider_name(self) -> str:
-        return "replicate/musicgen-stereo-large"
+        return f"replicate/{self._model.split('/')[1].split(':')[0]}"
 
     def generate_stem(
         self,
@@ -73,14 +122,11 @@ class ReplicateMusicGenProvider(AudioGenerator):
         output_path: str = "",
     ) -> GeneratedAudio:
         """
-        Call MusicGen Stereo Large and write the result as WAV to output_path.
-
-        The BPM is prepended to the prompt so the model is anchored to the
-        correct tempo — MusicGen responds well to explicit BPM instructions.
+        Call MusicGen and write the result as WAV to output_path.
+        BPM is prepended to the prompt — MusicGen responds well to explicit tempo cues.
         """
         import replicate
 
-        # Prepend BPM anchor — improves tempo accuracy significantly
         full_prompt = f"{bpm:.0f} BPM. {prompt}"
 
         log.debug("MusicGen request: bpm=%.1f duration=%ds prompt='%.80s'",
@@ -101,21 +147,17 @@ class ReplicateMusicGenProvider(AudioGenerator):
                 },
             )
         finally:
-            # Always throttle — even on failure — so the next stem request
-            # doesn't fire immediately into a rate-limit wall.
+            # Throttle even on failure to avoid rate-limit cascade on the next stem
             time.sleep(_REPLICATE_REQUEST_DELAY_S)
 
-        # The SDK returns either a FileOutput object or a URL string
         audio_bytes = self._extract_bytes(output)
 
         if not audio_bytes:
             raise RuntimeError(f"MusicGen returned empty output for prompt: {full_prompt[:80]}")
 
-        # Write to disk
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         Path(output_path).write_bytes(audio_bytes)
 
-        # Verify the written file is readable and get its duration
         audio_data, sr = sf.read(output_path)
         actual_duration = len(audio_data) / sr
 
@@ -131,22 +173,15 @@ class ReplicateMusicGenProvider(AudioGenerator):
     @retry_http
     def _extract_bytes(self, output) -> bytes:
         """
-        Extract raw bytes from the Replicate SDK output.
-
-        The SDK may return:
-          - A FileOutput object with a .read() method
-          - A URL string (older SDK versions or some models)
-          - A list containing one of the above
+        Extract raw audio bytes from the Replicate SDK output.
+        Handles FileOutput objects (SDK ≥ 0.25), URL strings, and lists.
         """
-        # Unwrap list (some models return list of outputs)
         if isinstance(output, list):
             output = output[0]
 
-        # FileOutput object (replicate SDK >= 0.25)
         if hasattr(output, "read"):
             return output.read()
 
-        # URL string — download directly
         if isinstance(output, str) and output.startswith("http"):
             resp = httpx.get(output, timeout=120.0, follow_redirects=True)
             resp.raise_for_status()
