@@ -240,10 +240,17 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
                 data   = _parse_crew_json(raw, f"AudioPromptBatch batch {batch_num}/{total_batches}")
 
                 prompts_raw = data.get("prompts", [])
+                expected_count = pos_end - pos_start + 1
                 if not prompts_raw:
                     raise ValueError(
                         f"Audio PE returned 0 prompts for batch {batch_num}/{total_batches} "
                         f"(positions {pos_start}-{pos_end})"
+                    )
+                if len(prompts_raw) < expected_count:
+                    raise ValueError(
+                        f"Audio PE returned {len(prompts_raw)}/{expected_count} prompts "
+                        f"for batch {batch_num}/{total_batches} (positions {pos_start}-{pos_end}) "
+                        f"— LLM truncated output, retrying"
                     )
 
                 # Force-correct positions in case the LLM mis-numbered them
