@@ -156,6 +156,11 @@ class Mix(TimestampMixin, Base):
     key_signature:  Mapped[str | None]  = mapped_column(String(16))
     stem_count:     Mapped[int]         = mapped_column(Integer, default=0)
 
+    # ── CSO narrative arc (stored for chapter generation at render time) ───
+    # The renderer reads this to burn chapter title overlays into the video
+    # without waiting for SEO (which runs after rendering in the pipeline).
+    transition_arc: Mapped[str | None] = mapped_column(Text)
+
     # ── File artefacts ─────────────────────────────────────────────────────
     mastered_audio_path: Mapped[str | None] = mapped_column(Text)
     full_video_path:     Mapped[str | None] = mapped_column(Text)

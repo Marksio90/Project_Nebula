@@ -26,7 +26,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from shared.config import get_settings
-from shared.db.models import Mix, PlatformUpload, Visual, VisualStatus, VisualType
+from shared.db.models import Mix, Visual, VisualStatus, VisualType
 from shared.db.session import get_sync_db
 from shared.schemas.events import VideoQAResult, VideoRenderResult
 
@@ -62,11 +62,14 @@ def render_full_mix_video(mix_id: str) -> VideoRenderResult:
                 Visual.status == VisualStatus.READY,
             )
         ).scalars().all()
-        chapters = db.execute(
-            select(PlatformUpload.chapters_pl)
-            .where(PlatformUpload.mix_id == mix_id)
-            .limit(1)
-        ).scalar_one_or_none()
+
+    # Generate chapter markers from transition_arc + duration.
+    # We do NOT read from PlatformUpload here — the Polish SEO agent runs at
+    # step 11, after this render (step 8), so PlatformUpload doesn't exist yet.
+    # _arc_chapters() parses the CSO's transition_arc string and falls back to
+    # evenly-spaced synthetic markers if the arc can't be parsed.
+    audio_duration_for_chapters = _probe_duration(mix.mastered_audio_path) if mix.mastered_audio_path else 0.0
+    chapters = _arc_chapters(mix.transition_arc, audio_duration_for_chapters, mix.subgenre)
 
     if not mix.mastered_audio_path or not Path(mix.mastered_audio_path).exists():
         raise FileNotFoundError(f"Mastered audio not found: {mix.mastered_audio_path}")
@@ -464,6 +467,101 @@ def _select_background_visual(visuals: list, prefer_video: bool) -> str | None:
         if not prefer_video and not is_video and v.file_path and Path(v.file_path).exists():
             return v.file_path
     return None
+
+
+def _arc_chapters(
+    transition_arc: str | None,
+    duration_seconds: float,
+    subgenre: str | None,
+) -> list[dict]:
+    """
+    Generate chapter markers for FFmpeg drawtext from the CSO's transition_arc.
+
+    Strategy:
+      1. Parse minute numbers from the arc string ("0-3 min", "4 min", etc.)
+         and map them to musically meaningful chapter names.
+      2. If parsing yields < 3 chapters, fall back to evenly-spaced synthetic
+         markers derived purely from duration + known arc shape
+         (intro 0%, build 8%, drop 20%, peak 45%, breakdown 70%, outro 85%).
+
+    Returns a list of {"time_str": "MM:SS", "title_pl": "<Polish name>"} dicts.
+    The Polish labels are simple enough to hardcode (not worth an LLM call).
+    """
+    import re
+
+    # Ordered arc segment labels (Polish) for synthetic fallback
+    _ARC_LABELS = [
+        (0.00, "Intro"),
+        (0.08, "Build Up"),
+        (0.20, "Pierwszy Drop"),
+        (0.45, "Peak Energy"),
+        (0.70, "Breakdown"),
+        (0.85, "Outro"),
+    ]
+
+    def _secs_to_timestr(secs: float) -> str:
+        secs = max(0, int(secs))
+        h, rem = divmod(secs, 3600)
+        m, s   = divmod(rem, 60)
+        if h:
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+
+    if duration_seconds < 60:
+        # Too short to bother with chapters
+        return []
+
+    chapters: list[dict] = []
+
+    if transition_arc:
+        # Extract "X min" and "X-Y min" patterns with preceding context word
+        # e.g. "intro 0-3 min, first drop 4 min, peak 20-35 min"
+        pattern = re.compile(
+            r'([a-zA-Z ]{2,25}?)\s+'      # preceding label (greedy, up to 25 chars)
+            r'(\d+)(?:[–\-]\d+)?\s*min',  # minute number (range start)
+            re.IGNORECASE,
+        )
+        _label_map = {
+            "intro":     "Intro",
+            "build":     "Build Up",
+            "drop":      "Drop",
+            "peak":      "Peak Energy",
+            "breakdown": "Breakdown",
+            "liquid":    "Liquid Section",
+            "outro":     "Outro",
+            "euphoric":  "Euphoric Outro",
+        }
+        seen_minutes: set[int] = set()
+        for m in pattern.finditer(transition_arc):
+            raw_label = m.group(1).strip().lower()
+            minute    = int(m.group(2))
+            secs      = minute * 60.0
+            if secs >= duration_seconds or minute in seen_minutes:
+                continue
+            seen_minutes.add(minute)
+            # Map raw label to a cleaner Polish/English name
+            label = next(
+                (v for k, v in _label_map.items() if k in raw_label),
+                raw_label.title(),
+            )
+            chapters.append({"time_str": _secs_to_timestr(secs), "title_pl": label})
+
+        chapters.sort(key=lambda c: _timestr_to_seconds(c["time_str"]))
+
+    # Fall back to synthetic markers if we parsed fewer than 3 from the arc
+    if len(chapters) < 3:
+        log.debug("Arc parsing yielded %d chapters — using synthetic markers", len(chapters))
+        chapters = [
+            {"time_str": _secs_to_timestr(frac * duration_seconds), "title_pl": label}
+            for frac, label in _ARC_LABELS
+            if frac * duration_seconds < duration_seconds - 30  # don't add marker < 30s from end
+        ]
+
+    log.debug(
+        "Chapter markers for render: %d chapters from %s",
+        len(chapters), "arc" if transition_arc else "synthetic",
+    )
+    return chapters
 
 
 def _timestr_to_seconds(time_str: str) -> float:

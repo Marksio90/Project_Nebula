@@ -217,6 +217,33 @@ def run_audio_qa(
     )
 
 
+def renormalize_audio_file(audio_path: str) -> None:
+    """
+    Re-apply the full mastering chain to an existing audio file, overwriting it.
+
+    Called by run_qa_audio_check when QA fails, so that the Celery retry checks
+    a freshly-corrected file rather than the same file that just failed.
+
+    Use-cases:
+      - LUFS drifted due to floating-point accumulation across many stems
+      - True peak exceeded ceiling after loudness normalisation boosted gain
+      - File was written with an incorrect gain by a previous worker
+    """
+    log.info("Re-normalising audio in-place: %s", audio_path)
+    try:
+        audio_stereo, sr = sf.read(audio_path, dtype="float32", always_2d=True)
+        audio = audio_stereo.T   # → (2, N)
+        mastered, lufs_pre, tp = master_audio(audio, sr)
+        sf.write(audio_path, mastered.T, sr, subtype="PCM_24")
+        log.info(
+            "Re-normalisation complete: pre_LUFS=%.2f → %.2f LUFS, TP=%.2f dBFS",
+            lufs_pre, TARGET_LUFS, tp,
+        )
+    except Exception as exc:
+        log.error("renormalize_audio_file failed for %s: %s", audio_path, exc)
+        raise
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────

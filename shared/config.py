@@ -106,10 +106,33 @@ class Settings(BaseSettings):
     #   gpt-4o                (OpenAI, expensive but top quality)
     #   claude-haiku-4-5-20251001  (Anthropic, ultra-cheap)
     #   claude-sonnet-4-6          (Anthropic, balanced)
+    # ── LLM model assignment strategy ─────────────────────────────────────
+    # Three tiers, each controllable independently via env vars:
+    #
+    #   llm_model        → Audio PE, Visual PE (English prompts, formulaic structure)
+    #                      gpt-4o-mini is sufficient — tasks are repetitive and constrained
+    #
+    #   llm_precise_model → CSO strategy + all QA agents (structured JSON only)
+    #                       gpt-4o-mini is sufficient — no creative writing, pure logic
+    #
+    #   llm_seo_model     → Polish SEO agent ONLY (user-facing viral copy on YouTube/TikTok)
+    #                       Defaults to gpt-4o — Polish language quality and viral hook
+    #                       writing are directly tied to channel growth and revenue.
+    #                       This is the only LLM call the audience ever sees.
+    #                       Swap to gpt-4o-mini to save ~$0.01/mix if quality is acceptable.
+    #
+    # Cost per mix at defaults (~150 stems):
+    #   Audio PE (8 batches)  : ~32k tokens  → mini : $0.018
+    #   CSO + QA agents       : ~2k tokens   → mini : $0.001
+    #   Visual PE             : ~1.5k tokens → mini : $0.0005
+    #   Polish SEO + QA       : ~2.5k tokens → 4o   : $0.025
+    #   ─────────────────────────────────────────────────────
+    #   Total LLM per mix     :                      ≈ $0.045
+    #   Replicate MusicGen    :                      ≈ $1.20   (dominates)
+    #   DALL-E 3 images       :                      ≈ $0.64
     llm_model: str = Field(default="gpt-4o-mini", alias="LLM_MODEL")
-    # Separate model for high-precision structured JSON outputs (CSO + QA tasks).
-    # Default same as llm_model — set to a stronger model if CSO quality suffers.
     llm_precise_model: str = Field(default="gpt-4o-mini", alias="LLM_PRECISE_MODEL")
+    llm_seo_model: str = Field(default="gpt-4o", alias="LLM_SEO_MODEL")
 
     # ── Generation Limits ─────────────────────────────────────────────────
     stem_duration_seconds: int = 30              # Audio stem length in seconds
