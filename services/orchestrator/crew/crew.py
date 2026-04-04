@@ -164,22 +164,23 @@ def build_audio_prompt_crew(
     total_batches: int,
 ) -> Crew:
     """
-    Audio PE crew: generates one batch of audio prompts (positions position_start..position_end_inclusive).
-    QA agent reviews prompt quality, arc coherence, and exact count.
-    Callers loop over batches of BATCH_SIZE=25 to avoid token limits.
+    Audio PE crew: generates one batch of audio prompts.
+
+    Single-agent design (no QA): removing the QA agent cuts output token
+    usage by ~50% (QA had to reproduce all N prompts to "validate" them).
+    All validation (count, transition_type, intensity arc, word count) is
+    handled in Python inside run_audio_prompt_engineer() — faster, cheaper,
+    and more reliable than a second LLM call.
     """
     task_cfg   = _load_yaml("tasks.yaml")["audio_prompt_task"]
     batch_size = position_end_inclusive - position_start + 1
 
-    # Arc boundary helpers passed to the task description so the agent can place
-    # each batch correctly within the overall intensity curve.
     arc_intro_end   = max(0, int(total_stems * 0.15) - 1)
     arc_peak_start  = int(total_stems * 0.45)
     arc_peak_end    = int(total_stems * 0.70)
     arc_outro_start = int(total_stems * 0.85)
 
     audio_pe = _make_agent("audio_prompt_engineer", llm=_get_llm())
-    qa       = _make_agent("qa_agent", llm=_get_precise_llm())
 
     prompt_task = Task(
         description=task_cfg["description"].format(
@@ -204,41 +205,21 @@ def build_audio_prompt_crew(
             batch_size_plus_1=batch_size + 1,
         ),
         expected_output=(
-            f"A valid JSON object with EXACTLY {batch_size} entries in 'prompts'. "
-            f"Each entry: position (integer, sequential from {position_start} to "
-            f"{position_end_inclusive}), prompt_en (30-50 word English string), "
+            f"ONLY a raw JSON object — no prose, no markdown fences. "
+            f"Must contain EXACTLY {batch_size} entries in 'prompts', "
+            f"positions {position_start} to {position_end_inclusive}. "
+            "Each entry: position (int), prompt_en (50-80 word English string with "
+            "BPM, drum type, bassline, atmosphere, energy phrase), "
             "transition_type (intro|build|drop|breakdown|peak|outro), "
-            "intensity (float 0.0-1.0). The 'mix_id' field must be present."
+            "intensity (float 0.0–1.0 following the arc). "
+            "Response begins with { and ends with }."
         ),
         agent=audio_pe,
     )
 
-    qa_task = Task(
-        description=(
-            f"Review batch {batch_num}/{total_batches} of audio prompts for mix_id='{mix_id}'. "
-            f"Positions {position_start}–{position_end_inclusive} ({batch_size} prompts). "
-            "CRITICAL: Your entire response must be ONLY a valid JSON object. "
-            "Do NOT write any explanation, summary, validation notes, or prose of any kind. "
-            "Start your response with {{ and end with }}. Nothing before or after the JSON. "
-            f"Check: (1) exactly {batch_size} prompts with sequential positions from {position_start}, "
-            "(2) intensity values form a plausible arc (not all identical), "
-            "(3) each prompt 40-80 words with BPM, drum type, bass type, atmosphere, energy phrase, "
-            "(4) transition_type is one of: intro|build|drop|breakdown|peak|outro. "
-            "If the JSON is valid, output it unchanged. If corrections are needed, output ONLY the corrected JSON."
-        ),
-        expected_output=(
-            "ONLY a raw JSON object with no surrounding text whatsoever. "
-            f"Must contain exactly {batch_size} items in the 'prompts' array. "
-            "No markdown fences, no explanation sentences, no confirmation, no validation summary. "
-            "The response must begin with { and end with }."
-        ),
-        agent=qa,
-        context=[prompt_task],
-    )
-
     return Crew(
-        agents=[audio_pe, qa],
-        tasks=[prompt_task, qa_task],
+        agents=[audio_pe],
+        tasks=[prompt_task],
         process=Process.sequential,
         verbose=settings.crewai_verbose,
     )

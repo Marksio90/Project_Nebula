@@ -110,6 +110,84 @@ def _parse_crew_json(raw_output: str, schema_hint: str = "") -> dict:
     raise ValueError(f"Agent returned invalid JSON for {schema_hint}")
 
 
+_VALID_TRANSITION_TYPES = {"intro", "build", "drop", "breakdown", "peak", "outro"}
+
+
+def _validate_audio_prompts(
+    prompts_raw: list,
+    expected_count: int,
+    batch_num: int,
+    total_batches: int,
+    pos_start: int,
+    pos_end: int,
+) -> None:
+    """
+    Python-level validation of audio prompt batches — replaces the LLM QA agent.
+
+    Checks:
+      1. At least `expected_count` prompts returned (LLM truncation detection)
+      2. Each transition_type is a known enum value
+      3. Each intensity is a float in [0.0, 1.0]
+      4. Intensity values form a plausible arc (not all identical)
+      5. Each prompt_en is non-empty
+
+    Raises ValueError on first violation so the per-batch retry loop retries
+    only the failing batch, not the whole mix.
+    """
+    tag = f"batch {batch_num}/{total_batches} (positions {pos_start}-{pos_end})"
+
+    if not prompts_raw:
+        raise ValueError(f"Audio PE returned 0 prompts for {tag}")
+
+    if len(prompts_raw) < expected_count:
+        raise ValueError(
+            f"Audio PE returned {len(prompts_raw)}/{expected_count} prompts for {tag} "
+            f"— LLM truncated output"
+        )
+
+    intensities: list[float] = []
+    for p in prompts_raw[:expected_count]:
+        # transition_type
+        tt = str(p.get("transition_type", "")).strip().lower()
+        if tt not in _VALID_TRANSITION_TYPES:
+            raise ValueError(
+                f"Invalid transition_type '{tt}' in {tag} at position {p.get('position')} "
+                f"— must be one of {_VALID_TRANSITION_TYPES}"
+            )
+
+        # intensity
+        raw_intensity = p.get("intensity")
+        try:
+            intensity = float(raw_intensity)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Non-numeric intensity '{raw_intensity}' in {tag} at position {p.get('position')}"
+            )
+        if not (0.0 <= intensity <= 1.0):
+            raise ValueError(
+                f"Intensity {intensity} out of range [0,1] in {tag} at position {p.get('position')}"
+            )
+        intensities.append(intensity)
+
+        # prompt_en must be non-empty
+        if not str(p.get("prompt_en", "")).strip():
+            raise ValueError(f"Empty prompt_en in {tag} at position {p.get('position')}")
+
+    # Arc sanity: all intensities identical → LLM just repeated same value
+    unique_rounded = len(set(round(i, 1) for i in intensities))
+    if expected_count >= 5 and unique_rounded == 1:
+        raise ValueError(
+            f"All {expected_count} intensities are identical ({intensities[0]}) in {tag} "
+            f"— arc is flat, LLM likely failed to vary energy"
+        )
+
+    log.debug(
+        "Validation OK: batch %d/%d — %d prompts, intensity range %.2f–%.2f",
+        batch_num, total_batches, expected_count,
+        min(intensities), max(intensities),
+    )
+
+
 def _stems_dir(mix_id: str) -> Path:
     p = Path(settings.stems_dir) / mix_id
     p.mkdir(parents=True, exist_ok=True)
@@ -241,23 +319,18 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
 
                 prompts_raw = data.get("prompts", [])
                 expected_count = pos_end - pos_start + 1
-                if not prompts_raw:
-                    raise ValueError(
-                        f"Audio PE returned 0 prompts for batch {batch_num}/{total_batches} "
-                        f"(positions {pos_start}-{pos_end})"
-                    )
-                if len(prompts_raw) < expected_count:
-                    raise ValueError(
-                        f"Audio PE returned {len(prompts_raw)}/{expected_count} prompts "
-                        f"for batch {batch_num}/{total_batches} (positions {pos_start}-{pos_end}) "
-                        f"— LLM truncated output, retrying"
-                    )
+
+                # ── Python-level validation (replaces LLM QA agent) ──────────
+                _validate_audio_prompts(
+                    prompts_raw, expected_count,
+                    batch_num, total_batches, pos_start, pos_end,
+                )
 
                 # Force-correct positions in case the LLM mis-numbered them
-                for i, p in enumerate(prompts_raw):
+                for i, p in enumerate(prompts_raw[:expected_count]):
                     p["position"] = pos_start + i
 
-                batch_prompts = [StemPrompt(**p) for p in prompts_raw]
+                batch_prompts = [StemPrompt(**p) for p in prompts_raw[:expected_count]]
                 log.info(
                     "Batch %d/%d done: %d prompts (positions %d-%d)",
                     batch_num, total_batches, len(batch_prompts), pos_start, pos_end,

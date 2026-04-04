@@ -70,8 +70,9 @@ audio_prompt_task:
 
     Rules for every prompt:
     1. English only.
-    2. 30-50 words MAXIMUM. Include: exact BPM, drum pattern type, bassline type,
-       one atmosphere word, energy phrase. Be concise — every word counts.
+    2. 50-80 words. Include: exact BPM, drum pattern type, bassline type,
+       atmosphere descriptor, energy level phrase, specific sonic details.
+       Rich, vivid language — this feeds a neural network music generator.
     3. Drum pattern: amen break / jungle step / half-time / rolling / four-on-floor
     4. Bassline: Reese / Neuro / Liquid / Rollers / wobble / sub-only
     5. Energy level phrase: "building tension" / "full drop" / "breakdown" / "peak energy" / "gradual outro"
