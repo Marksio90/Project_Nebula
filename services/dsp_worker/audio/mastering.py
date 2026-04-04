@@ -6,10 +6,10 @@ Followed by ITU-R BS.1770-4 integrated loudness measurement via pyloudnorm
 and normalisation to the streaming target of -14.0 LUFS.
 
 Mastering chain (signal order):
-  1. High-pass @ 30 Hz        — Remove sub-sonic rumble (common in Lyria output)
+  1. High-pass @ 30 Hz        — Remove sub-sonic rumble (common in AI audio output)
   2. Low shelf  @ 120 Hz -1dB — Tighten sub-bass for streaming codec headroom
   3. Peak EQ    @ 3.5 kHz +1.5 dB — Presence boost (DNB transient clarity)
-  4. High shelf @ 14 kHz +1.0 dB  — Air / top-end extension
+  4. High shelf @ 14 kHz +1.0 dB  — Air / top-end extension (MusicGen tends to soft-limit highs)
   5. Compressor 2:1, attack 20ms, release 250ms — Glue compression
                                                   (slow attack preserves transients)
   6. Hard limiter @ -1.0 dBFS — True-peak ceiling for streaming delivery

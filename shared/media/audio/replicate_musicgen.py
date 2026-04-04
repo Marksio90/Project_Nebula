@@ -11,7 +11,7 @@ Why MusicGen Stereo Large:
   - Stereo output — essential for a professional DJ mix
   - Publicly available, stable API, no waitlist
   - Excellent prompt following for genre/BPM instructions
-  - 30-second outputs match Lyria's spec exactly
+  - 30-second outputs at 44.1 kHz stereo WAV
   - ~3–8s generation time per stem
 ─────────────────────────────────────────────────────────────────────────────
 """

@@ -6,7 +6,7 @@ CrewAI Crew factories for Project Nebula.
 Three purpose-built crews, each with self-reflection capabilities:
 
   build_strategy_crew(...)   → CSO determines BPM/subgenre/arc
-  build_audio_prompt_crew(…) → Audio PE generates 90+ Lyria 3 prompts
+  build_audio_prompt_crew(…) → Audio PE generates batched MusicGen prompts
   build_visual_prompt_crew(…)→ Visual PE generates image/video prompts
   build_seo_crew(…)          → Polish SEO agent generates all metadata
 

@@ -4,7 +4,7 @@ services/video_worker/video/renderer.py
 Hardware-accelerated FFmpeg video renderer for Project Nebula.
 
 Renders a professional-grade 16:9 YouTube mix video with:
-  - Seamlessly looped Veo video background (crossfade every ~8 seconds)
+  - Seamlessly looped video background (crossfade every ~8 seconds)
   - Dynamic audio waveform + spectrum analyser overlay (complex filtergraph)
   - Chapter title cards timed to the musical arc (drawtext)
   - Hardware acceleration: NVENC (NVIDIA) → VAAPI (Intel/AMD) → libx264 fallback
@@ -71,7 +71,7 @@ def render_full_mix_video(mix_id: str) -> VideoRenderResult:
     if not mix.mastered_audio_path or not Path(mix.mastered_audio_path).exists():
         raise FileNotFoundError(f"Mastered audio not found: {mix.mastered_audio_path}")
 
-    # Select background video (prefer Veo loop, fall back to static image)
+    # Select background video (prefer FFmpeg Ken Burns loop, fall back to static image)
     bg_video = _select_background_visual(visuals, prefer_video=True)
     bg_image = _select_background_visual(visuals, prefer_video=False)
 

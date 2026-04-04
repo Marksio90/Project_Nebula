@@ -9,10 +9,10 @@ Each function:
   2. Parses the structured output into a typed Pydantic schema
   3. Returns the schema object — no raw dicts leak out
 
-Media generation is provider-agnostic — controlled by env vars:
-  AUDIO_PROVIDER=replicate (default) | gemini
-  IMAGE_PROVIDER=dalle3    (default) | gemini
-  VIDEO_PROVIDER=ffmpeg    (default) | gemini
+Production media stack:
+  AUDIO_PROVIDER=replicate → Replicate MusicGen (~$0.008/stem)
+  IMAGE_PROVIDER=dalle3    → OpenAI DALL-E 3    (~$0.080/image HD)
+  VIDEO_PROVIDER=ffmpeg    → FFmpeg Ken Burns    (FREE, local)
 
 All media is written to the shared volume mounts defined in Settings.
 ─────────────────────────────────────────────────────────────────────────────
@@ -259,11 +259,7 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
 
 def fetch_stems_batch(batch: AudioPromptBatch) -> StemBatchResult:
     """
-    Generates every stem in the batch via the configured AudioGenerator.
-    Provider is selected at runtime from AUDIO_PROVIDER env var:
-      replicate → ReplicateMusicGenProvider (~$0.008/stem, production-ready)
-      gemini    → GeminiLyriaProvider (experimental, requires waitlist access)
-
+    Generates every stem in the batch via Replicate MusicGen.
     Files are written as WAV to STEMS_DIR/{mix_id}/{position:04d}.wav
     """
     mix_id    = batch.strategy.mix_id
@@ -271,7 +267,7 @@ def fetch_stems_batch(batch: AudioPromptBatch) -> StemBatchResult:
     generator = get_audio_generator()
     results: list[StemFetchResult] = []
 
-    log.info("Generating %d stems via %s", len(batch.prompts), generator.provider_name)
+    log.info("Generating %d stems via Replicate MusicGen", len(batch.prompts))
 
     # Load existing stem IDs from DB (needed for result records)
     with get_sync_db() as db:
@@ -364,10 +360,8 @@ def fetch_visuals_batch(mix_id: str) -> None:
     Generates all pending Visual rows via the configured Image/VideoGenerator.
 
     Provider selection (env vars):
-      IMAGE_PROVIDER=dalle3   → DallE3Provider      (~$0.080/image, HD vivid)
-      IMAGE_PROVIDER=gemini   → GeminiImagenProvider (experimental)
-      VIDEO_PROVIDER=ffmpeg   → FFmpegKenBurnsProvider (free, animated Ken Burns)
-      VIDEO_PROVIDER=gemini   → GeminiVeoProvider    (experimental)
+      IMAGE_PROVIDER=dalle3   → DallE3Provider           (~$0.080/image, HD vivid)
+      VIDEO_PROVIDER=ffmpeg   → FFmpegKenBurnsProvider   (free, animated Ken Burns)
 
     For video_loop visuals, the pipeline first generates a static image and
     then animates it with the VideoGenerator. This guarantees that even the
@@ -397,14 +391,14 @@ def fetch_visuals_batch(mix_id: str) -> None:
                 # Step 1: generate a source image
                 src_image_path = str(out_dir / f"{visual_id}_src.png")
                 img_generator.generate_image(
-                    prompt=visual.gemini_prompt,
+                    prompt=visual.prompt_en,
                     aspect_ratio=visual.aspect_ratio,
                     output_path=src_image_path,
                 )
                 # Step 2: animate into a video loop
                 output_path = str(out_dir / f"{visual_id}.mp4")
                 vid_generator.generate_video_loop(
-                    prompt=visual.gemini_prompt,
+                    prompt=visual.prompt_en,
                     aspect_ratio=visual.aspect_ratio,
                     output_path=output_path,
                     source_image_path=src_image_path,
@@ -415,7 +409,7 @@ def fetch_visuals_batch(mix_id: str) -> None:
                 ext = "png"
                 output_path = str(out_dir / f"{visual_id}.{ext}")
                 img_generator.generate_image(
-                    prompt=visual.gemini_prompt,
+                    prompt=visual.prompt_en,
                     aspect_ratio=visual.aspect_ratio,
                     output_path=output_path,
                 )

@@ -29,10 +29,10 @@ audio_prompt_engineer:
   role: "Senior Audio Prompt Engineer"
   goal: >
     Translate the CSO's strategic brief into a precise, ordered sequence of
-    English text prompts for Gemini Lyria 3, each describing a unique
-    30-second audio stem. The sequence must form a coherent, emotionally
-    engaging musical arc with smooth intensity progression, clear drops,
-    breakdowns, and buildups that mirror a professional DJ set structure.
+    English text prompts for MusicGen, each describing a unique 30-second
+    audio stem. The sequence must form a coherent, emotionally engaging
+    musical arc with smooth intensity progression, clear drops, breakdowns,
+    and buildups that mirror a professional DJ set structure.
   backstory: >
     You are a hybrid music producer and AI prompt specialist. You have spent
     years fine-tuning text-to-audio models and understand exactly which
@@ -48,8 +48,8 @@ audio_prompt_engineer:
 visual_prompt_engineer:
   role: "Cinematic Visual Prompt Engineer"
   goal: >
-    Generate striking, non-generic English prompts for Gemini Nano Banana 2
-    (images) and Veo (video loops) that create a cinematic visual identity
+    Generate striking, non-generic English prompts for DALL-E 3 (images) and
+    FFmpeg-animated video loops that create a cinematic visual identity
     perfectly matched to the musical style and energy of the mix. Produce
     separate optimised prompts for 16:9 widescreen and 9:16 vertical formats.
   backstory: >
