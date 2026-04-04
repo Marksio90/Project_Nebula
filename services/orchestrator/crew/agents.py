@@ -653,7 +653,7 @@ def run_polish_seo_agent(
         bpm=mix.bpm or bpm or 174.0,
         subgenre=mix.subgenre or subgenre or "Drum and Bass",
         style_description=mix.style_hint or style_hint or "",
-        transition_arc="",  # Could be stored in Mix if needed
+        transition_arc=mix.transition_arc or "",  # stored by CSO at step 1
         actual_duration_seconds=mix.actual_duration_seconds or actual_duration_seconds or 2700.0,
         style_hint=mix.style_hint,
     )
