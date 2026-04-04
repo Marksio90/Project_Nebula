@@ -21,12 +21,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from shared.config import get_settings
-from shared.db.models import Mix
+from shared.db.models import Mix, MixStatus, Stem, StemStatus, Visual, VisualStatus
 from shared.db.session import get_db
 from shared.tasks.celery_app import celery_app
+
+# ── Step descriptions for live monitoring ─────────────────────────────────────
+_STEP_DETAILS: dict[str, dict] = {
+    "pending":          {"step": 0,  "label": "Oczekuje w kolejce",           "desc": "Zadanie zostało przyjęte i czeka na wolny worker."},
+    "strategising":     {"step": 1,  "label": "CSO: Strategia AI",            "desc": "AI decyduje o BPM, subgatunku, kluczu i łuku narracyjnym."},
+    "prompt_gen":       {"step": 2,  "label": "Generowanie promptów audio",   "desc": "AI tworzy szczegółowe prompty dla każdego 30-sekundowego stemu MusicGen."},
+    "fetching_stems":   {"step": 3,  "label": "Generowanie stemów (Replicate)","desc": "Replicate MusicGen generuje każdy stem audio (~$0.008/stem)."},
+    "stitching":        {"step": 4,  "label": "DSP: Beat matching + stitch",  "desc": "librosa wyrównuje beaty, crossfade na downbeat, łączy stemy."},
+    "mastering":        {"step": 5,  "label": "DSP: Mastering",               "desc": "Pedalboard: EQ → kompresja → limiter → normalizacja LUFS -14."},
+    "qa_audio":         {"step": 6,  "label": "QA Audio",                     "desc": "Weryfikacja LUFS ±0.5, true peak ≤ -1 dBFS."},
+    "fetching_visuals": {"step": 7,  "label": "Generowanie wizuali (DALL-E 3)","desc": "DALL-E 3 generuje tła i okładki (~$0.08/obraz HD)."},
+    "rendering":        {"step": 8,  "label": "Render video FFmpeg",          "desc": "FFmpeg łączy audio z wizualizacją spektrum i overlayami."},
+    "slicing":          {"step": 9,  "label": "Cięcie Shortów",               "desc": "Analiza RMS → wybór 3 najgłośniejszych chwil → eksport 9:16."},
+    "qa_video":         {"step": 10, "label": "QA Video",                     "desc": "Ffprobe sprawdza frame drops i sync audio/video."},
+    "uploading":        {"step": 11, "label": "Upload YouTube + TikTok",      "desc": "Upload pełnego miksu + 3 Shortów z polskim SEO."},
+    "complete":         {"step": 12, "label": "Gotowe! ✓",                    "desc": "Mix opublikowany na YouTube i TikTok."},
+    "failed":           {"step": -1, "label": "Błąd",                         "desc": "Pipeline zatrzymany. Sprawdź error_message."},
+}
 
 log = logging.getLogger("nebula.api_gateway")
 settings = get_settings()
@@ -90,11 +108,25 @@ class MixStatusResponse(BaseModel):
     info: dict | None = None
 
 
+class MixProgressDetail(BaseModel):
+    """Detailed progress for a single mix — stem & visual generation counts."""
+    step_index:   int
+    step_label:   str
+    step_desc:    str
+    stem_total:   int = 0
+    stem_ready:   int = 0
+    stem_failed:  int = 0
+    visual_total: int = 0
+    visual_ready: int = 0
+    visual_failed: int = 0
+
+
 class MixListItem(BaseModel):
     mix_id: UUID
     status: str
     bpm: float | None
     subgenre: str | None
+    key_signature: str | None
     style_hint: str | None
     requested_duration_minutes: int
     actual_duration_seconds: float | None
@@ -102,6 +134,7 @@ class MixListItem(BaseModel):
     error_message: str | None
     created_at: str
     updated_at: str
+    progress: MixProgressDetail | None = None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -138,17 +171,80 @@ async def list_mixes(
     offset: int = Query(default=0, ge=0),
 ) -> list[MixListItem]:
     from sqlalchemy import desc
+
+    _TERMINAL = {MixStatus.COMPLETE, MixStatus.FAILED}
+
     async with get_db() as session:
         result = await session.execute(
             select(Mix).order_by(desc(Mix.created_at)).offset(offset).limit(limit)
         )
         mixes = result.scalars().all()
-    return [
-        MixListItem(
+
+        # Fetch stem + visual counts for non-terminal mixes (only active ones need live data)
+        active_ids = [m.id for m in mixes if m.status not in _TERMINAL]
+
+        stem_map: dict[str, dict] = {}
+        visual_map: dict[str, dict] = {}
+
+        if active_ids:
+            # Stem counts per mix — using PostgreSQL FILTER aggregate
+            stem_rows = await session.execute(
+                select(
+                    Stem.mix_id,
+                    func.count(Stem.id).label("total"),
+                    func.count(Stem.id).filter(Stem.status == StemStatus.READY.value).label("s_ready"),
+                    func.count(Stem.id).filter(Stem.status == StemStatus.FAILED.value).label("s_failed"),
+                )
+                .where(Stem.mix_id.in_(active_ids))
+                .group_by(Stem.mix_id)
+            )
+            for row in stem_rows.mappings().all():
+                stem_map[row["mix_id"]] = {
+                    "total":  row["total"]   or 0,
+                    "ready":  row["s_ready"] or 0,
+                    "failed": row["s_failed"] or 0,
+                }
+
+            # Visual counts per mix
+            visual_rows = await session.execute(
+                select(
+                    Visual.mix_id,
+                    func.count(Visual.id).label("total"),
+                    func.count(Visual.id).filter(Visual.status == VisualStatus.READY.value).label("v_ready"),
+                    func.count(Visual.id).filter(Visual.status == VisualStatus.FAILED.value).label("v_failed"),
+                )
+                .where(Visual.mix_id.in_(active_ids))
+                .group_by(Visual.mix_id)
+            )
+            for row in visual_rows.mappings().all():
+                visual_map[row["mix_id"]] = {
+                    "total":  row["total"]   or 0,
+                    "ready":  row["v_ready"] or 0,
+                    "failed": row["v_failed"] or 0,
+                }
+
+    items = []
+    for m in mixes:
+        step_info = _STEP_DETAILS.get(m.status.value, _STEP_DETAILS["pending"])
+        sc = stem_map.get(m.id, {})
+        vc = visual_map.get(m.id, {})
+        progress = MixProgressDetail(
+            step_index=step_info["step"],
+            step_label=step_info["label"],
+            step_desc=step_info["desc"],
+            stem_total=sc.get("total", 0),
+            stem_ready=sc.get("ready", 0),
+            stem_failed=sc.get("failed", 0),
+            visual_total=vc.get("total", 0),
+            visual_ready=vc.get("ready", 0),
+            visual_failed=vc.get("failed", 0),
+        ) if m.status not in _TERMINAL else None
+        items.append(MixListItem(
             mix_id=UUID(m.id),
             status=m.status.value,
             bpm=m.bpm,
             subgenre=m.subgenre,
+            key_signature=m.key_signature,
             style_hint=m.style_hint,
             requested_duration_minutes=m.requested_duration_minutes,
             actual_duration_seconds=m.actual_duration_seconds,
@@ -156,9 +252,9 @@ async def list_mixes(
             error_message=m.error_message,
             created_at=m.created_at.isoformat(),
             updated_at=m.updated_at.isoformat(),
-        )
-        for m in mixes
-    ]
+            progress=progress,
+        ))
+    return items
 
 
 @app.post(
