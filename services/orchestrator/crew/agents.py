@@ -340,84 +340,137 @@ def run_cso_agent(
 # 2. Audio Prompt Engineer
 # ─────────────────────────────────────────────────────────────────────────────
 
-AUDIO_PROMPT_BATCH_SIZE = 20  # Reduced from 25: gives LLM more headroom to complete JSON arrays
-
-
 def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
     """
-    Runs the Audio Prompt Engineer crew in batches of AUDIO_PROMPT_BATCH_SIZE stems
-    to stay within the 16 384-token output limit.  All batches are assembled and
-    re-indexed so the final AudioPromptBatch has contiguous positions 0..stem_count-1.
+    Generate all audio prompts in parallel using direct LiteLLM calls.
 
-    Per-batch retry (max 2 attempts per batch) prevents a single bad QA response
-    from restarting all previously-completed batches.
+    Architecture change vs old sequential CrewAI approach:
+    ┌───────────────────────────────────────────────────────────────┐
+    │ Old: CrewAI batch1 → CrewAI batch2 → … → CrewAI batchN      │
+    │      N × (~15s LLM + ~3s CrewAI overhead) = ~126s for N=7   │
+    │                                                               │
+    │ New: litellm.completion(batch1) ┐                            │
+    │      litellm.completion(batch2) ├── ThreadPoolExecutor       │
+    │      …                          ┘  all in parallel           │
+    │      Wall-clock ≈ ~15s (single LLM call latency)            │
+    └───────────────────────────────────────────────────────────────┘
+
+    Why bypass CrewAI for this task:
+    - Audio prompt generation is a single structured-output LLM call per batch.
+    - CrewAI adds ~3s of Python overhead (agent init, task routing, iteration
+      management) with zero benefit for a non-agentic, no-tool task.
+    - Direct LiteLLM calls with response_format="json_object" guarantee valid
+      JSON without CrewAI's string parsing layer.
+    - All batches are fully independent — ThreadPoolExecutor parallelises them.
     """
-    from services.orchestrator.crew.crew import build_audio_prompt_crew
     import math
+    from concurrent.futures import ThreadPoolExecutor, as_completed, Future
+    from pathlib import Path
+
+    import yaml
+    import litellm
 
     total_stems   = strategy.stem_count
-    batch_size    = AUDIO_PROMPT_BATCH_SIZE
+    batch_size    = settings.audio_prompt_batch_size
+    concurrency   = settings.prompt_concurrency
     total_batches = math.ceil(total_stems / batch_size)
-    all_prompts: list[StemPrompt] = []
 
-    log.info(
-        "Generating %d audio prompts for mix %s in %d batches of ≤%d",
-        total_stems, strategy.mix_id, total_batches, batch_size,
+    # Pre-compute arc boundaries once
+    arc_intro_end   = max(0, int(total_stems * 0.15) - 1)
+    arc_peak_start  = int(total_stems * 0.45)
+    arc_peak_end    = int(total_stems * 0.70)
+    arc_outro_start = int(total_stems * 0.85)
+
+    # Load agent persona from YAML (role + goal + backstory → system prompt)
+    _config_dir = Path(__file__).parent.parent / "config"
+    with open(_config_dir / "agents.yaml", encoding="utf-8") as f:
+        agent_cfg = yaml.safe_load(f)["audio_prompt_engineer"]
+    with open(_config_dir / "tasks.yaml", encoding="utf-8") as f:
+        task_cfg = yaml.safe_load(f)["audio_prompt_task"]
+
+    _system_prompt = (
+        f"Role: {agent_cfg['role']}\n"
+        f"Goal: {agent_cfg['goal']}\n"
+        f"Background: {agent_cfg['backstory']}\n\n"
+        "You respond ONLY with a valid JSON object — no prose, no markdown fences."
     )
 
-    for batch_num in range(1, total_batches + 1):
+    log.info(
+        "Generating %d audio prompts for mix %s: %d batches of ≤%d (concurrency=%d)",
+        total_stems, strategy.mix_id, total_batches, batch_size, concurrency,
+    )
+
+    def _generate_batch(batch_num: int) -> tuple[int, list[StemPrompt]]:
+        """
+        Generate one batch of prompts via a direct LiteLLM call.
+        Returns (batch_num, list[StemPrompt]).  Raises on permanent failure.
+        """
         pos_start = (batch_num - 1) * batch_size
         pos_end   = min(pos_start + batch_size - 1, total_stems - 1)
+        expected  = pos_end - pos_start + 1
 
-        batch_prompts: list[StemPrompt] | None = None
+        user_prompt = task_cfg["description"].format(
+            mix_id=strategy.mix_id,
+            bpm=strategy.bpm,
+            subgenre=strategy.subgenre,
+            key_signature=strategy.key_signature,
+            style_description=strategy.style_description,
+            transition_arc=strategy.transition_arc,
+            batch_num=batch_num,
+            total_batches=total_batches,
+            total_stems=total_stems,
+            batch_size=expected,
+            position_start=pos_start,
+            position_end_inclusive=pos_end,
+            arc_intro_end=arc_intro_end,
+            arc_peak_start=arc_peak_start,
+            arc_peak_end=arc_peak_end,
+            arc_outro_start=arc_outro_start,
+            total_stems_minus_1=total_stems - 1,
+            batch_size_minus_1=expected - 1,
+            batch_size_plus_1=expected + 1,
+        )
+
         last_exc: Exception | None = None
-
         for attempt in range(1, 3):  # max 2 attempts per batch
             try:
-                crew = build_audio_prompt_crew(
-                    mix_id=strategy.mix_id,
-                    bpm=strategy.bpm,
-                    subgenre=strategy.subgenre,
-                    key_signature=strategy.key_signature,
-                    style_description=strategy.style_description,
-                    transition_arc=strategy.transition_arc,
-                    total_stems=total_stems,
-                    position_start=pos_start,
-                    position_end_inclusive=pos_end,
-                    batch_num=batch_num,
-                    total_batches=total_batches,
+                response = litellm.completion(
+                    model=settings.llm_model,
+                    api_key=settings.openai_api_key,
+                    messages=[
+                        {"role": "system", "content": _system_prompt},
+                        {"role": "user",   "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.7,
+                    max_tokens=16_384,
                 )
-
-                result = crew.kickoff()
-                raw    = result.raw if hasattr(result, "raw") else str(result)
-                data   = _parse_crew_json(raw, f"AudioPromptBatch batch {batch_num}/{total_batches}")
+                raw  = response.choices[0].message.content or ""
+                data = _parse_crew_json(raw, f"AudioPromptBatch batch {batch_num}/{total_batches}")
 
                 prompts_raw = data.get("prompts", [])
-                expected_count = pos_end - pos_start + 1
-
-                # ── Python-level validation (replaces LLM QA agent) ──────────
                 _validate_audio_prompts(
-                    prompts_raw, expected_count,
+                    prompts_raw, expected,
                     batch_num, total_batches, pos_start, pos_end,
                 )
 
                 # Force-correct positions in case the LLM mis-numbered them
-                for i, p in enumerate(prompts_raw[:expected_count]):
+                for i, p in enumerate(prompts_raw[:expected]):
                     p["position"] = pos_start + i
 
-                batch_prompts = [StemPrompt(**p) for p in prompts_raw[:expected_count]]
+                batch_prompts = [StemPrompt(**p) for p in prompts_raw[:expected]]
                 log.info(
                     "Batch %d/%d done: %d prompts (positions %d-%d)",
                     batch_num, total_batches, len(batch_prompts), pos_start, pos_end,
                 )
-                break  # success — move on to next batch
+                return batch_num, batch_prompts
 
             except Exception as exc:
                 last_exc = exc
                 if attempt < 2:
                     log.warning(
-                        "Batch %d/%d attempt %d/%d failed: %s — retrying batch only",
-                        batch_num, total_batches, attempt, 2, exc,
+                        "Batch %d/%d attempt %d/2 failed: %s — retrying",
+                        batch_num, total_batches, attempt, exc,
                     )
                     time.sleep(2)
                 else:
@@ -426,15 +479,28 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
                         batch_num, total_batches, exc,
                     )
 
-        if batch_prompts is None:
-            # Both attempts failed — raise so the Celery task can retry the whole step
-            raise RuntimeError(
-                f"Audio PE batch {batch_num}/{total_batches} failed for mix {strategy.mix_id}: {last_exc}"
-            )
+        raise RuntimeError(
+            f"Audio PE batch {batch_num}/{total_batches} failed for mix "
+            f"{strategy.mix_id}: {last_exc}"
+        )
 
-        all_prompts.extend(batch_prompts)
+    # Fire all batches concurrently
+    results: dict[int, list[StemPrompt]] = {}
+    with ThreadPoolExecutor(max_workers=min(concurrency, total_batches)) as pool:
+        futures: dict[Future, int] = {
+            pool.submit(_generate_batch, bn): bn
+            for bn in range(1, total_batches + 1)
+        }
+        for future in as_completed(futures):
+            batch_num, batch_prompts = future.result()  # re-raises on failure
+            results[batch_num] = batch_prompts
 
-    # Trim to exact stem_count in case LLM over-generated on the last batch
+    # Reassemble in order
+    all_prompts: list[StemPrompt] = []
+    for bn in range(1, total_batches + 1):
+        all_prompts.extend(results[bn])
+
+    # Trim to exact stem_count
     all_prompts = all_prompts[:total_stems]
 
     log.info(

@@ -150,6 +150,15 @@ class Settings(BaseSettings):
     # POSTs; the heavy lifting (generation) happens asynchronously.
     replicate_submit_delay_s: float = Field(default=0.5, alias="REPLICATE_SUBMIT_DELAY_S")
 
+    # ── Concurrent prompt generation ───────────────────────────────────────
+    # Stems per LLM batch call.  40 is safe for gpt-4o-mini's 16k output
+    # limit (40 × ~80 words × ~1.3 tok ≈ 4 160 tokens).  Fewer batches =
+    # fewer API calls = less total latency even with parallelism.
+    audio_prompt_batch_size: int = Field(default=40, alias="AUDIO_PROMPT_BATCH_SIZE")
+    # How many LLM batch calls to fire simultaneously.
+    # OpenAI tier-1+: 500 RPM — 10 concurrent batches is trivially safe.
+    prompt_concurrency: int = Field(default=10, alias="PROMPT_CONCURRENCY")
+
     @field_validator("postgres_dsn", mode="before")
     @classmethod
     def coerce_asyncpg_scheme(cls, v: str) -> str:
