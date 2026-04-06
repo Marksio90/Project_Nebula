@@ -151,9 +151,12 @@ class Settings(BaseSettings):
     replicate_submit_delay_s: float = Field(default=0.5, alias="REPLICATE_SUBMIT_DELAY_S")
 
     # ── Concurrent prompt generation ───────────────────────────────────────
-    # Stems per LLM batch call.  40 is safe for gpt-4o-mini's 16k output
-    # limit (40 × ~80 words × ~1.3 tok ≈ 4 160 tokens).  Fewer batches =
-    # fewer API calls = less total latency even with parallelism.
+    # Stems per LLM batch call.
+    # Token budget (gpt-4o-mini): 16 384 max output tokens.
+    # Per stem (worst case): ~150 tokens (80-word prompt + JSON keys).
+    # 40 stems × 150 = 6 000 tokens → 37% of limit, safe headroom.
+    # Code hard-caps this at 81 regardless of env setting
+    # (= floor(16384 × 0.75 / 150)) — cannot exceed token limit.
     audio_prompt_batch_size: int = Field(default=40, alias="AUDIO_PROMPT_BATCH_SIZE")
     # How many LLM batch calls to fire simultaneously.
     # OpenAI tier-1+: 500 RPM — 10 concurrent batches is trivially safe.

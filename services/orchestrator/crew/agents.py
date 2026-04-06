@@ -370,10 +370,26 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
     import yaml
     import litellm
 
+    # ── Token-safe batch size ──────────────────────────────────────────────
+    # gpt-4o-mini max output: 16 384 tokens.
+    # Each stem entry worst-case: ~150 tokens (80-word prompt_en + JSON keys).
+    # Safety margin: 75% of output budget → hard ceiling at 81 stems/batch.
+    # This guard fires if AUDIO_PROMPT_BATCH_SIZE is set too high in .env.
+    _TOKENS_PER_STEM  = 150   # conservative worst-case per output entry
+    _MAX_OUTPUT_TOKENS = 16_384
+    _SAFETY_FACTOR    = 0.75
+    _SAFE_MAX_BATCH   = int(_MAX_OUTPUT_TOKENS * _SAFETY_FACTOR / _TOKENS_PER_STEM)  # = 81
+
     total_stems   = strategy.stem_count
-    batch_size    = settings.audio_prompt_batch_size
+    batch_size    = min(settings.audio_prompt_batch_size, _SAFE_MAX_BATCH)
     concurrency   = settings.prompt_concurrency
     total_batches = math.ceil(total_stems / batch_size)
+
+    if batch_size < settings.audio_prompt_batch_size:
+        log.warning(
+            "AUDIO_PROMPT_BATCH_SIZE=%d exceeds token-safe ceiling %d — capped to %d",
+            settings.audio_prompt_batch_size, _SAFE_MAX_BATCH, batch_size,
+        )
 
     # Pre-compute arc boundaries once
     arc_intro_end   = max(0, int(total_stems * 0.15) - 1)
