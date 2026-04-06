@@ -306,7 +306,7 @@ def generate_audio_prompts(self, strategy_dict: dict) -> dict:
                 .on_conflict_do_update(
                     constraint="uq_stem_mix_position",
                     set_=dict(
-                        prompt_en=p.prompt_en,
+                        gemini_prompt=p.prompt_en,
                         status=StemStatus.PENDING.value,
                         error_message=None,
                     ),
