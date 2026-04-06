@@ -445,65 +445,125 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. Stem Fetcher — provider-agnostic via MediaGenerator factory
+# 3. Stem Fetcher — fire-and-forget async predictions + concurrent poll
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_stems_batch(batch: AudioPromptBatch) -> StemBatchResult:
     """
-    Generates every stem in the batch via Replicate MusicGen.
-    Files are written as WAV to STEMS_DIR/{mix_id}/{position:04d}.wav
+    Generates every stem in the batch concurrently via Replicate async predictions.
+
+    Algorithm:
+      1. Load stem IDs from DB.
+      2. Build StemRequest list.
+      3. Call generate_stems_concurrent() which:
+           a. Submits all N predictions to Replicate without waiting (Phase 1).
+           b. Polls all N predictions simultaneously in a ThreadPoolExecutor (Phase 2).
+           c. Saves each WAV as it completes; fires on_stem_done callback (Phase 3).
+      4. on_stem_done writes the stem status to DB immediately on completion
+         (live progress visible to the frontend during generation).
+
+    Wall-clock time ≈ slowest single generation (~45-90 s)
+    vs old sequential ≈ N × (generation + 11 s sleep).
     """
+    from shared.media.audio.replicate_musicgen import (
+        ReplicateMusicGenProvider,
+        StemRequest,
+        StemResult,
+    )
+
     mix_id    = batch.strategy.mix_id
     out_dir   = _stems_dir(mix_id)
     generator = get_audio_generator()
-    results: list[StemFetchResult] = []
 
-    log.info("Generating %d stems via Replicate MusicGen", len(batch.prompts))
+    log.info(
+        "Fetching %d stems concurrently (mix_id=%s, concurrency=%d)",
+        len(batch.prompts), mix_id, settings.stem_concurrency,
+    )
 
-    # Load existing stem IDs from DB (needed for result records)
+    # Load existing stem IDs from DB
     with get_sync_db() as db:
         stem_rows = db.execute(
             select(Stem.id, Stem.position).where(Stem.mix_id == mix_id)
         ).fetchall()
     stem_id_map = {r.position: r.id for r in stem_rows}
 
-    for prompt in batch.prompts:
-        stem_id   = stem_id_map.get(prompt.position, str(uuid.uuid4()))
-        file_path = str(out_dir / f"{prompt.position:04d}.wav")
+    # Build request list
+    stem_requests = [
+        StemRequest(
+            position=p.position,
+            prompt=p.prompt_en,
+            bpm=batch.strategy.bpm,
+            duration_s=settings.stem_duration_seconds,
+            output_path=str(out_dir / f"{p.position:04d}.wav"),
+        )
+        for p in batch.prompts
+    ]
 
+    # Live DB callback — called from worker threads as each stem finishes
+    def _on_stem_done(result: StemResult) -> None:
         try:
-            generator.generate_stem(
-                prompt=prompt.prompt_en,
-                bpm=batch.strategy.bpm,
-                duration_s=settings.stem_duration_seconds,
-                output_path=file_path,
-            )
             with get_sync_db() as db:
-                db.execute(
-                    update(Stem)
-                    .where(Stem.mix_id == mix_id, Stem.position == prompt.position)
-                    .values(status=StemStatus.READY, file_path=file_path)
-                )
-            results.append(StemFetchResult(
-                mix_id=mix_id, stem_id=stem_id,
-                position=prompt.position, file_path=file_path, status="ready",
-            ))
-            log.debug("Stem %04d ready: %s", prompt.position, file_path)
+                if result.ok:
+                    db.execute(
+                        update(Stem)
+                        .where(Stem.mix_id == mix_id, Stem.position == result.position)
+                        .values(status=StemStatus.READY, file_path=result.output_path)
+                    )
+                else:
+                    db.execute(
+                        update(Stem)
+                        .where(Stem.mix_id == mix_id, Stem.position == result.position)
+                        .values(
+                            status=StemStatus.FAILED,
+                            error_message=result.error[:1000],
+                        )
+                    )
+        except Exception as db_exc:
+            # Never let a DB write kill the generation loop
+            log.warning("DB progress update failed for stem %04d: %s", result.position, db_exc)
 
-        except Exception as exc:
-            log.error("Stem %04d FAILED: %s", prompt.position, exc)
-            with get_sync_db() as db:
-                db.execute(
-                    update(Stem)
-                    .where(Stem.mix_id == mix_id, Stem.position == prompt.position)
-                    .values(status=StemStatus.FAILED, error_message=str(exc)[:1000])
+    # Use concurrent provider directly if available, else fall back to sequential
+    if isinstance(generator, ReplicateMusicGenProvider):
+        stem_results = generator.generate_stems_concurrent(
+            requests=stem_requests,
+            on_stem_done=_on_stem_done,
+        )
+    else:
+        # Fallback: sequential loop for non-Replicate providers
+        stem_results = []
+        for req in stem_requests:
+            try:
+                generated = generator.generate_stem(
+                    prompt=req.prompt,
+                    bpm=req.bpm,
+                    duration_s=req.duration_s,
+                    output_path=req.output_path,
                 )
-            results.append(StemFetchResult(
-                mix_id=mix_id, stem_id=stem_id,
-                position=prompt.position, file_path="", status="failed", error=str(exc),
-            ))
+                r = StemResult(
+                    position=req.position,
+                    output_path=req.output_path,
+                    duration_s=generated.duration_s,
+                    sample_rate=generated.sample_rate,
+                )
+            except Exception as exc:
+                r = StemResult(position=req.position, output_path="", error=str(exc))
+            _on_stem_done(r)
+            stem_results.append(r)
 
-    return StemBatchResult(mix_id=mix_id, results=results)
+    # Map StemResult → StemFetchResult (public schema)
+    fetch_results = [
+        StemFetchResult(
+            mix_id=mix_id,
+            stem_id=stem_id_map.get(r.position, str(uuid.uuid4())),
+            position=r.position,
+            file_path=r.output_path,
+            status="ready" if r.ok else "failed",
+            error=r.error if not r.ok else None,
+        )
+        for r in stem_results
+    ]
+
+    return StemBatchResult(mix_id=mix_id, results=fetch_results)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

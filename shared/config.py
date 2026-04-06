@@ -140,6 +140,16 @@ class Settings(BaseSettings):
     target_lufs: float = -14.0                  # Streaming loudness target
     true_peak_dbfs: float = -1.0                # True peak ceiling
 
+    # ── Concurrent stem generation ─────────────────────────────────────────
+    # How many Replicate predictions to poll simultaneously.
+    # Free tier: 4–6 concurrent; paid tier: 50+.
+    # Increase STEM_CONCURRENCY if your Replicate plan allows more.
+    stem_concurrency: int = Field(default=8, alias="STEM_CONCURRENCY")
+    # Delay (seconds) between consecutive prediction *submissions*.
+    # 0.5 s is safe even on the free tier — submissions are cheap HTTP
+    # POSTs; the heavy lifting (generation) happens asynchronously.
+    replicate_submit_delay_s: float = Field(default=0.5, alias="REPLICATE_SUBMIT_DELAY_S")
+
     @field_validator("postgres_dsn", mode="before")
     @classmethod
     def coerce_asyncpg_scheme(cls, v: str) -> str:
