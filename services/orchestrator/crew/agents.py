@@ -503,26 +503,38 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
         pos_end   = min(pos_start + batch_size - 1, total_stems - 1)
         expected  = pos_end - pos_start + 1
 
-        user_prompt = task_cfg["description"].format(
-            mix_id=strategy.mix_id,
-            bpm=strategy.bpm,
-            subgenre=strategy.subgenre,
-            key_signature=strategy.key_signature,
-            style_description=strategy.style_description,
-            transition_arc=strategy.transition_arc,
-            batch_num=batch_num,
-            total_batches=total_batches,
-            total_stems=total_stems,
-            batch_size=expected,
-            position_start=pos_start,
-            position_end_inclusive=pos_end,
-            arc_intro_end=arc_intro_end,
-            arc_peak_start=arc_peak_start,
-            arc_peak_end=arc_peak_end,
-            arc_outro_start=arc_outro_start,
-            total_stems_minus_1=total_stems - 1,
-            batch_size_minus_1=expected - 1,
-            batch_size_plus_1=expected + 1,
+        user_prompt = (
+            task_cfg["description"].format(
+                mix_id=strategy.mix_id,
+                bpm=strategy.bpm,
+                subgenre=strategy.subgenre,
+                key_signature=strategy.key_signature,
+                style_description=strategy.style_description,
+                transition_arc=strategy.transition_arc,
+                batch_num=batch_num,
+                total_batches=total_batches,
+                total_stems=total_stems,
+                batch_size=expected,
+                position_start=pos_start,
+                position_end_inclusive=pos_end,
+                arc_intro_end=arc_intro_end,
+                arc_peak_start=arc_peak_start,
+                arc_peak_end=arc_peak_end,
+                arc_outro_start=arc_outro_start,
+                total_stems_minus_1=total_stems - 1,
+                batch_size_minus_1=expected - 1,
+                batch_size_plus_1=expected + 1,
+            )
+            # Include expected_output so the model knows the exact key names.
+            # Without this, the model guesses key names (e.g. "prompt" instead
+            # of "prompt_en") causing all entries to fail validation.
+            + "\n\nRequired output format (use EXACTLY these key names):\n"
+            + task_cfg["expected_output"].format(
+                batch_size=expected,
+                mix_id=strategy.mix_id,
+                position_start=pos_start,
+                position_end_inclusive=pos_end,
+            )
         )
 
         last_exc: Exception | None = None
