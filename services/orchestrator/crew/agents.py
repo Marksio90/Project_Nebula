@@ -543,12 +543,28 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
                 data = _parse_crew_json(raw, f"AudioPromptBatch batch {batch_num}/{total_batches}")
 
                 prompts_raw = data.get("prompts", [])
+
+                # Auto-repair null positions BEFORE validation.
+                # The model sometimes returns position=null for small last batches.
+                # We already know the correct positions from pos_start + index, so
+                # assign them here — validation then sees clean, complete entries.
+                repaired = 0
+                for i, p in enumerate(prompts_raw):
+                    if p.get("position") is None and str(p.get("prompt_en", "")).strip():
+                        p["position"] = pos_start + i
+                        repaired += 1
+                if repaired:
+                    log.warning(
+                        "Auto-repaired %d null positions in batch %d/%d",
+                        repaired, batch_num, total_batches,
+                    )
+
                 _validate_audio_prompts(
                     prompts_raw, expected,
                     batch_num, total_batches, pos_start, pos_end,
                 )
 
-                # Force-correct positions in case the LLM mis-numbered them
+                # Force-correct positions (handles mis-numbered but non-null positions)
                 for i, p in enumerate(prompts_raw[:expected]):
                     p["position"] = pos_start + i
 
