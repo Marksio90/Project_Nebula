@@ -112,6 +112,239 @@ def _parse_crew_json(raw_output: str, schema_hint: str = "") -> dict:
 
 _VALID_TRANSITION_TYPES = {"intro", "build", "drop", "breakdown", "peak", "outro"}
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LLM response normalizers
+# ─────────────────────────────────────────────────────────────────────────────
+# Models sometimes use different key names, capitalisations, or aliases.
+# These normalizers map every known variant to the canonical field name so
+# validation and Pydantic construction always see consistent keys.
+# Principle: never drop data, only add/rename missing canonical keys.
+
+def _normalize_audio_prompt_entry(p: dict, fallback_position: int) -> dict:
+    """
+    Normalise a single audio prompt dict returned by the LLM.
+    Maps key-name aliases → canonical names, fills missing position.
+    """
+    # position
+    if p.get("position") is None:
+        for alt in ("pos", "index", "stem_position", "stem_index", "num", "id", "stem_num"):
+            if alt in p and p[alt] is not None:
+                p["position"] = p[alt]
+                break
+        if p.get("position") is None:
+            p["position"] = fallback_position
+
+    # prompt_en
+    if not str(p.get("prompt_en", "")).strip():
+        for alt in ("prompt", "text", "description", "content",
+                    "audio_prompt", "stem_prompt", "music_prompt",
+                    "audio_description", "stem_description"):
+            if alt in p and str(p[alt]).strip():
+                p["prompt_en"] = str(p[alt]).strip()
+                break
+
+    # transition_type
+    if not str(p.get("transition_type", "")).strip():
+        for alt in ("transition", "type", "section_type", "arc_type",
+                    "arc", "section", "stage"):
+            if alt in p and str(p[alt]).strip():
+                p["transition_type"] = str(p[alt]).strip().lower()
+                break
+    else:
+        p["transition_type"] = str(p["transition_type"]).strip().lower()
+
+    # intensity — also accept string floats and percentage ints
+    if p.get("intensity") is None:
+        for alt in ("energy", "level", "energy_level", "intensity_level",
+                    "value", "energy_value", "amplitude"):
+            if alt in p and p[alt] is not None:
+                p["intensity"] = p[alt]
+                break
+    if p.get("intensity") is not None:
+        try:
+            val = float(p["intensity"])
+            # if someone sent 0–100 scale, normalise to 0–1
+            p["intensity"] = val / 100.0 if val > 1.0 else val
+        except (TypeError, ValueError):
+            p["intensity"] = 0.5  # safe default
+
+    return p
+
+
+def _normalize_visual_prompt_entry(p: dict) -> dict:
+    """Normalise a single visual prompt dict returned by the LLM."""
+    # visual_type — map common aliases AND shorthands
+    _VT_ALIASES = {
+        "background":      "background_image",
+        "bg_image":        "background_image",
+        "bg":              "background_image",
+        "background_img":  "background_image",
+        "video":           "video_loop",
+        "loop":            "video_loop",
+        "video_bg":        "video_loop",
+        "thumb":           "thumbnail",
+        "thumbnails":      "thumbnail",
+        "short_bg":        "short_background",
+        "short_background_image": "short_background",
+        "short_thumb":     "short_thumbnail",
+        "tiktok_thumb":    "short_thumbnail",
+        "type":            None,  # will read value, not remap
+    }
+    if not str(p.get("visual_type", "")).strip():
+        for alt in ("type", "visual", "asset_type", "image_type"):
+            if alt in p and str(p[alt]).strip():
+                raw_vt = str(p[alt]).strip().lower().replace(" ", "_")
+                p["visual_type"] = _VT_ALIASES.get(raw_vt, raw_vt)
+                break
+    else:
+        raw_vt = str(p["visual_type"]).strip().lower().replace(" ", "_")
+        p["visual_type"] = _VT_ALIASES.get(raw_vt, raw_vt)
+
+    # aspect_ratio
+    if not str(p.get("aspect_ratio", "")).strip():
+        for alt in ("ratio", "size", "format", "dimensions"):
+            if alt in p and str(p[alt]).strip():
+                p["aspect_ratio"] = str(p[alt]).strip()
+                break
+    # auto-assign correct ratio based on visual_type if still missing
+    if not str(p.get("aspect_ratio", "")).strip():
+        p["aspect_ratio"] = (
+            "9:16"
+            if str(p.get("visual_type", "")).startswith("short_")
+            else "16:9"
+        )
+
+    # prompt_en
+    if not str(p.get("prompt_en", "")).strip():
+        for alt in ("prompt", "text", "description", "content",
+                    "visual_prompt", "image_prompt", "image_description"):
+            if alt in p and str(p[alt]).strip():
+                p["prompt_en"] = str(p[alt]).strip()
+                break
+
+    return p
+
+
+def _normalize_cso_data(data: dict) -> dict:
+    """Normalise a CSO strategy dict returned by the LLM."""
+    # lowercase all keys first (handles "BPM", "Subgenre", etc.)
+    data = {k.lower(): v for k, v in data.items()}
+
+    # bpm aliases
+    if data.get("bpm") is None:
+        for alt in ("tempo", "bpm_value", "beats_per_minute"):
+            if alt in data and data[alt] is not None:
+                data["bpm"] = data[alt]
+                break
+    if data.get("bpm") is not None:
+        try:
+            data["bpm"] = float(data["bpm"])
+        except (TypeError, ValueError):
+            pass
+
+    # subgenre aliases
+    if not data.get("subgenre"):
+        for alt in ("sub_genre", "subgenre_name", "genre_type", "music_style"):
+            if alt in data and data[alt]:
+                data["subgenre"] = data[alt]
+                break
+
+    # key_signature aliases
+    if not data.get("key_signature"):
+        for alt in ("key", "musical_key", "key_sig", "music_key", "tonality"):
+            if alt in data and data[alt]:
+                data["key_signature"] = data[alt]
+                break
+
+    # transition_arc aliases
+    if not data.get("transition_arc"):
+        for alt in ("arc", "transition", "arc_description",
+                    "mix_arc", "set_arc", "flow"):
+            if alt in data and data[alt]:
+                data["transition_arc"] = data[alt]
+                break
+
+    # style_description aliases
+    if not data.get("style_description"):
+        for alt in ("style", "description", "sound_description",
+                    "style_desc", "mix_style"):
+            if alt in data and data[alt]:
+                data["style_description"] = data[alt]
+                break
+
+    # stem_count — ensure it's an int
+    if data.get("stem_count") is not None:
+        try:
+            data["stem_count"] = int(data["stem_count"])
+        except (TypeError, ValueError):
+            pass
+
+    return data
+
+
+def _normalize_seo_data(data: dict) -> dict:
+    """Normalise a Polish SEO metadata dict returned by the LLM."""
+    # title_pl
+    if not data.get("title_pl"):
+        for alt in ("title", "title_polish", "tytul", "tytul_pl"):
+            if alt in data and data[alt]:
+                data["title_pl"] = data[alt]
+                break
+
+    # description_pl
+    if not data.get("description_pl"):
+        for alt in ("description", "description_polish", "opis", "opis_pl", "desc_pl"):
+            if alt in data and data[alt]:
+                data["description_pl"] = data[alt]
+                break
+
+    # tags_pl — also coerce string → list
+    if not data.get("tags_pl"):
+        for alt in ("tags", "hashtags", "keywords", "tagi", "tagi_pl"):
+            if alt in data and data[alt]:
+                data["tags_pl"] = data[alt]
+                break
+    if isinstance(data.get("tags_pl"), str):
+        data["tags_pl"] = [t.strip() for t in data["tags_pl"].split(",") if t.strip()]
+
+    # chapters_pl + nested key normalisation
+    if not data.get("chapters_pl"):
+        for alt in ("chapters", "chapter_markers", "rozdzialy", "chapter_list"):
+            if alt in data and data[alt]:
+                data["chapters_pl"] = data[alt]
+                break
+    if isinstance(data.get("chapters_pl"), list):
+        normalised_chapters = []
+        for c in data["chapters_pl"]:
+            if not isinstance(c, dict):
+                continue
+            # time_str
+            if not c.get("time_str"):
+                for alt in ("time", "timestamp", "start_time", "czas"):
+                    if alt in c and c[alt]:
+                        c["time_str"] = str(c[alt])
+                        break
+            # title_pl
+            if not c.get("title_pl"):
+                for alt in ("title", "name", "chapter_title", "tytul"):
+                    if alt in c and c[alt]:
+                        c["title_pl"] = str(c[alt])
+                        break
+            normalised_chapters.append(c)
+        data["chapters_pl"] = normalised_chapters
+
+    # shorts_titles_pl
+    if not data.get("shorts_titles_pl"):
+        for alt in ("shorts_titles", "short_titles", "shorts",
+                    "tytuly_shorts", "krotkie_tytuly"):
+            if alt in data and data[alt]:
+                data["shorts_titles_pl"] = data[alt]
+                break
+    if isinstance(data.get("shorts_titles_pl"), str):
+        data["shorts_titles_pl"] = [data["shorts_titles_pl"]]
+
+    return data
+
 
 def _validate_audio_prompts(
     prompts_raw: list,
@@ -383,7 +616,7 @@ def run_cso_agent(
     )
 
     raw  = response.choices[0].message.content or ""
-    data = _parse_crew_json(raw, "CSOStrategy")
+    data = _normalize_cso_data(_parse_crew_json(raw, "CSOStrategy"))
     data["mix_id"] = mix_id
     # Inject known value — LLM doesn't need to echo it back
     data["requested_duration_minutes"] = requested_duration_minutes
@@ -554,31 +787,25 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
                 raw  = response.choices[0].message.content or ""
                 data = _parse_crew_json(raw, f"AudioPromptBatch batch {batch_num}/{total_batches}")
 
-                prompts_raw = data.get("prompts", [])
+                # Normalise every entry — maps key-name aliases, fills missing
+                # position, coerces intensity to float — before validation runs.
+                raw_prompts = data.get("prompts", [])
+                prompts_raw = [
+                    _normalize_audio_prompt_entry(p, pos_start + i)
+                    for i, p in enumerate(raw_prompts)
+                ]
 
                 # Auto-repair null positions BEFORE validation.
                 # The model sometimes returns position=null for small last batches.
-                # We already know the correct positions from pos_start + index, so
-                # assign them here — validation then sees clean, complete entries.
-                repaired = 0
-                for i, p in enumerate(prompts_raw):
-                    if p.get("position") is None and str(p.get("prompt_en", "")).strip():
-                        p["position"] = pos_start + i
-                        repaired += 1
-                if repaired:
-                    log.warning(
-                        "Auto-repaired %d null positions in batch %d/%d",
-                        repaired, batch_num, total_batches,
-                    )
+                # Normalizer already assigned positions; force-correct ensures
+                # sequential order even if the model skipped numbers.
+                for i, p in enumerate(prompts_raw[:expected]):
+                    p["position"] = pos_start + i
 
                 _validate_audio_prompts(
                     prompts_raw, expected,
                     batch_num, total_batches, pos_start, pos_end,
                 )
-
-                # Force-correct positions (handles mis-numbered but non-null positions)
-                for i, p in enumerate(prompts_raw[:expected]):
-                    p["position"] = pos_start + i
 
                 batch_prompts = [StemPrompt(**p) for p in prompts_raw[:expected]]
                 log.info(
@@ -785,7 +1012,7 @@ def run_visual_prompt_engineer(
     data = _parse_crew_json(raw, "VisualPromptBatch")
     data["mix_id"] = mix_id
 
-    prompts_raw = data.get("prompts", [])
+    prompts_raw = [_normalize_visual_prompt_entry(p) for p in data.get("prompts", [])]
     _validate_visual_prompts(prompts_raw, mix_id)
 
     prompts = [VisualPrompt(**p) for p in prompts_raw]
@@ -908,7 +1135,7 @@ def run_polish_seo_agent(
 
     result = crew.kickoff()
     raw  = result.raw if hasattr(result, "raw") else str(result)
-    data = _parse_crew_json(raw, "PolishSEOMetadata")
+    data = _normalize_seo_data(_parse_crew_json(raw, "PolishSEOMetadata"))
     data["mix_id"] = mix_id
 
     log.info("Polish SEO ready: title='%s'", data.get("title_pl", "")[:60])
