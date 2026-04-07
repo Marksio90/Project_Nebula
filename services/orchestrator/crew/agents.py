@@ -385,6 +385,8 @@ def run_cso_agent(
     raw  = response.choices[0].message.content or ""
     data = _parse_crew_json(raw, "CSOStrategy")
     data["mix_id"] = mix_id
+    # Inject known value — LLM doesn't need to echo it back
+    data["requested_duration_minutes"] = requested_duration_minutes
 
     # ── Python-level QA validation (replaces QA CrewAI agent) ────────────
     chosen = {
