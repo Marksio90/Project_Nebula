@@ -142,6 +142,15 @@ def _normalize_audio_prompt_entry(p: dict, fallback_position: int) -> dict:
             if alt in p and str(p[alt]).strip():
                 p["prompt_en"] = str(p[alt]).strip()
                 break
+    # Universal fallback: if still empty, pick the longest string value
+    # in the dict that looks like a music prompt (≥ 10 words).
+    if not str(p.get("prompt_en", "")).strip():
+        best = ""
+        for v in p.values():
+            if isinstance(v, str) and len(v.split()) >= 10 and len(v) > len(best):
+                best = v
+        if best:
+            p["prompt_en"] = best
 
     # transition_type
     if not str(p.get("transition_type", "")).strip():
@@ -797,9 +806,16 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
                             log.warning("Audio PE used key '%s' instead of 'prompts'", _key)
                             break
 
+                # Log first entry so we can diagnose unexpected structures
+                if raw_prompts:
+                    log.debug("Batch %d/%d first raw entry: %s",
+                              batch_num, total_batches, str(raw_prompts[0])[:300])
+                else:
+                    log.warning("Batch %d/%d: no array found in response keys: %s",
+                                batch_num, total_batches, list(data.keys()))
+
                 # Normalise every entry — maps key-name aliases, fills missing
                 # position, coerces intensity to float — before validation runs.
-                raw_prompts = data.get("prompts", [])
                 prompts_raw = [
                     _normalize_audio_prompt_entry(p, pos_start + i)
                     for i, p in enumerate(raw_prompts)
