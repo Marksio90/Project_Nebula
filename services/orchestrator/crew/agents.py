@@ -139,9 +139,22 @@ def _validate_audio_prompts(
     if not prompts_raw:
         raise ValueError(f"Audio PE returned 0 prompts for {tag}")
 
+    # Strip null/malformed entries (position=None or prompt_en missing/empty).
+    # The model occasionally appends a null trailing object in small last batches.
+    valid_raw = [
+        p for p in prompts_raw
+        if p.get("position") is not None and str(p.get("prompt_en", "")).strip()
+    ]
+    if len(valid_raw) < len(prompts_raw):
+        log.warning(
+            "Stripped %d null/empty entries from %s (kept %d/%d)",
+            len(prompts_raw) - len(valid_raw), tag, len(valid_raw), len(prompts_raw),
+        )
+    prompts_raw = valid_raw
+
     if len(prompts_raw) < expected_count:
         raise ValueError(
-            f"Audio PE returned {len(prompts_raw)}/{expected_count} prompts for {tag} "
+            f"Audio PE returned {len(prompts_raw)}/{expected_count} valid prompts for {tag} "
             f"— LLM truncated output"
         )
 
@@ -285,6 +298,10 @@ def _exports_dir(mix_id: str) -> Path:
 # 1. CSO Agent
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. CSO Agent
+# ─────────────────────────────────────────────────────────────────────────────
+
 @retry_openai_api
 def run_cso_agent(
     mix_id: str,
@@ -292,45 +309,104 @@ def run_cso_agent(
     requested_duration_minutes: int,
 ) -> CSOStrategy:
     """
-    Runs the Chief Strategy Officer CrewAI crew.
-    Genre is the only user input; all other parameters (BPM, subgenre, key,
-    arc, stem count) are decided autonomously by the CSO agent.
-    Queries the dedup registry so the agent never repeats a combination.
+    Chief Strategy Officer — selects BPM, subgenre, key, arc, and stem count.
+
+    Architecture change vs old CrewAI CSO + QA crew:
+    ┌───────────────────────────────────────────────────────────────────────┐
+    │ Old: CrewAI crew.kickoff()                                           │
+    │      → agent iterates: call BpmRegistryTool → call YouTubeTool →    │
+    │        call BpmRegistryTool again → QA review → …                   │
+    │      9 sequential LLM calls × ~3-4s each ≈ 38 seconds              │
+    │      (tools also re-fetched data that Python already had)            │
+    │                                                                       │
+    │ New: Python pre-fetches both tools, injects results directly         │
+    │      → single litellm.completion() with full context                │
+    │      → Python-level novelty validation (replaces QA agent)          │
+    │      ~5 seconds total                                                │
+    └───────────────────────────────────────────────────────────────────────┘
     """
-    from services.orchestrator.crew.crew import build_strategy_crew
+    import litellm
+    from pathlib import Path
+
+    import yaml
     from shared.genres import GENRES
+    from services.orchestrator.crew.tools import BpmRegistryTool, YoutubeAnalyticsTool
 
-    # Pass genre profile to the CSO so it knows the BPM + duration bounds
     genre_profile = GENRES.get(genre, {})
+    bpm_range     = genre_profile.get("bpm_range", (100, 180))
 
-    # Load the full registry to pass as context to the CSO
-    with get_sync_db() as db:
-        rows = db.execute(
-            select(
-                BpmSubgenreRegistry.bpm,
-                BpmSubgenreRegistry.subgenre,
-                BpmSubgenreRegistry.key_signature,
-            )
-        ).fetchall()
+    # ── Pre-fetch both tool results in Python (no agent round-trips) ──────
+    registry_json   = BpmRegistryTool()._run()
+    analytics_json  = YoutubeAnalyticsTool()._run(metric="top_performing_subgenres")
 
-    used_combinations = [
-        {"bpm": r.bpm, "subgenre": r.subgenre, "key_signature": r.key_signature}
-        for r in rows
-    ]
-    used_json = json.dumps(used_combinations)
+    import json as _json
+    registry_data   = _json.loads(registry_json)
+    used_combinations = registry_data.get("used_combinations", [])
+    used_json        = _json.dumps(used_combinations)
 
-    crew = build_strategy_crew(
-        mix_id=mix_id,
-        genre=genre,
-        genre_bpm_range=genre_profile.get("bpm_range", (100, 180)),
-        requested_duration_minutes=requested_duration_minutes,
-        used_combinations_json=used_json,
+    # ── Build prompts from YAML config ────────────────────────────────────
+    _config_dir = Path(__file__).parent.parent / "config"
+    with open(_config_dir / "agents.yaml", encoding="utf-8") as f:
+        agent_cfg = yaml.safe_load(f)["cso_agent"]
+    with open(_config_dir / "tasks.yaml", encoding="utf-8") as f:
+        task_cfg = yaml.safe_load(f)["cso_strategy_task"]
+
+    system_prompt = (
+        f"Role: {agent_cfg['role']}\n"
+        f"Goal: {agent_cfg['goal']}\n"
+        f"Background: {agent_cfg['backstory']}\n\n"
+        "You respond ONLY with a valid JSON object — no prose, no markdown fences."
     )
 
-    result = crew.kickoff()
-    raw = result.raw if hasattr(result, "raw") else str(result)
+    user_prompt = (
+        task_cfg["description"].format(
+            mix_id=mix_id,
+            genre=genre,
+            genre_bpm_min=bpm_range[0],
+            genre_bpm_max=bpm_range[1],
+            requested_duration_minutes=requested_duration_minutes,
+            used_combinations=used_json,
+        )
+        + f"\n\nYouTube Analytics context (use to inform variety decisions):\n{analytics_json}"
+    )
+
+    response = litellm.completion(
+        model=settings.llm_precise_model,
+        api_key=settings.openai_api_key,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.2,
+        max_tokens=1_024,
+    )
+
+    raw  = response.choices[0].message.content or ""
     data = _parse_crew_json(raw, "CSOStrategy")
-    data["mix_id"] = mix_id  # Ensure mix_id is present
+    data["mix_id"] = mix_id
+
+    # ── Python-level QA validation (replaces QA CrewAI agent) ────────────
+    chosen = {
+        "bpm":           data.get("bpm"),
+        "subgenre":      str(data.get("subgenre", "")).strip(),
+        "key_signature": str(data.get("key_signature", "")).strip(),
+    }
+    for combo in used_combinations:
+        if (
+            abs((combo.get("bpm") or 0) - (chosen["bpm"] or 0)) < 0.5
+            and combo.get("subgenre", "").lower() == chosen["subgenre"].lower()
+            and combo.get("key_signature", "").lower() == chosen["key_signature"].lower()
+        ):
+            raise ValueError(
+                f"CSO chose a duplicate combination: {chosen} — already in registry. "
+                "Retry will select a different combination."
+            )
+
+    expected_stem_count = min(int(requested_duration_minutes * 2), 150)
+    if abs((data.get("stem_count") or 0) - expected_stem_count) > 2:
+        data["stem_count"] = expected_stem_count
+        log.warning("CSO stem_count corrected to %d", expected_stem_count)
 
     log.info("CSO output: bpm=%.1f subgenre=%s", data.get("bpm"), data.get("subgenre"))
     return CSOStrategy(**data)
