@@ -787,6 +787,16 @@ def run_audio_prompt_engineer(strategy: CSOStrategy) -> AudioPromptBatch:
                 raw  = response.choices[0].message.content or ""
                 data = _parse_crew_json(raw, f"AudioPromptBatch batch {batch_num}/{total_batches}")
 
+                # Resolve top-level array key — model may use aliases for "prompts"
+                raw_prompts = data.get("prompts") or []
+                if not raw_prompts:
+                    for _key in ("stems", "audio_prompts", "stem_prompts",
+                                 "prompt_list", "items", "results", "data", "entries"):
+                        if data.get(_key):
+                            raw_prompts = data[_key]
+                            log.warning("Audio PE used key '%s' instead of 'prompts'", _key)
+                            break
+
                 # Normalise every entry — maps key-name aliases, fills missing
                 # position, coerces intensity to float — before validation runs.
                 raw_prompts = data.get("prompts", [])
@@ -1012,7 +1022,14 @@ def run_visual_prompt_engineer(
     data = _parse_crew_json(raw, "VisualPromptBatch")
     data["mix_id"] = mix_id
 
-    prompts_raw = [_normalize_visual_prompt_entry(p) for p in data.get("prompts", [])]
+    raw_visuals = data.get("prompts") or []
+    if not raw_visuals:
+        for _key in ("visuals", "visual_prompts", "assets", "images", "items", "results"):
+            if data.get(_key):
+                raw_visuals = data[_key]
+                log.warning("Visual PE used key '%s' instead of 'prompts'", _key)
+                break
+    prompts_raw = [_normalize_visual_prompt_entry(p) for p in raw_visuals]
     _validate_visual_prompts(prompts_raw, mix_id)
 
     prompts = [VisualPrompt(**p) for p in prompts_raw]
