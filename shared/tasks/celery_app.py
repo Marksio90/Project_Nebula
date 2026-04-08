@@ -16,6 +16,7 @@ from celery import Celery
 from kombu import Exchange, Queue
 
 from shared.config import get_settings
+from shared.tasks import definitions as _task_defs
 
 settings = get_settings()
 
@@ -31,24 +32,30 @@ TASK_QUEUES = (
 )
 
 # ── Task → Queue routing ──────────────────────────────────────────────────────
-TASK_ROUTES = {
+# Task names are derived dynamically from the imported function objects so that
+# IDE renames and refactors keep routing correct without silent failures.
+def _route(task_fn, queue: str) -> tuple[str, dict]:
+    return task_fn.name, {"queue": queue}
+
+
+TASK_ROUTES = dict([
     # Orchestration tasks
-    "shared.tasks.definitions.orchestrate_mix_pipeline":   {"queue": "orchestration"},
-    "shared.tasks.definitions.run_cso_strategy":           {"queue": "orchestration"},
-    "shared.tasks.definitions.generate_audio_prompts":     {"queue": "orchestration"},
-    "shared.tasks.definitions.generate_visual_prompts":    {"queue": "orchestration"},
-    "shared.tasks.definitions.fetch_audio_stems":           {"queue": "orchestration"},
-    "shared.tasks.definitions.fetch_visual_assets":         {"queue": "orchestration"},
-    "shared.tasks.definitions.upload_to_youtube":          {"queue": "upload"},
-    "shared.tasks.definitions.upload_to_tiktok":           {"queue": "upload"},
+    _route(_task_defs.orchestrate_mix_pipeline,  "orchestration"),
+    _route(_task_defs.run_cso_strategy,          "orchestration"),
+    _route(_task_defs.generate_audio_prompts,    "orchestration"),
+    _route(_task_defs.generate_visual_prompts,   "orchestration"),
+    _route(_task_defs.fetch_audio_stems,         "orchestration"),
+    _route(_task_defs.fetch_visual_assets,       "orchestration"),
+    _route(_task_defs.upload_to_youtube,         "upload"),
+    _route(_task_defs.upload_to_tiktok,          "upload"),
     # DSP tasks
-    "shared.tasks.definitions.stitch_and_master_audio":    {"queue": "dsp"},
-    "shared.tasks.definitions.run_qa_audio_check":         {"queue": "dsp"},
+    _route(_task_defs.stitch_and_master_audio,   "dsp"),
+    _route(_task_defs.run_qa_audio_check,        "dsp"),
     # Video tasks
-    "shared.tasks.definitions.render_full_video":          {"queue": "video"},
-    "shared.tasks.definitions.slice_viral_shorts":         {"queue": "video"},
-    "shared.tasks.definitions.run_qa_video_check":         {"queue": "video"},
-}
+    _route(_task_defs.render_full_video,         "video"),
+    _route(_task_defs.slice_viral_shorts,        "video"),
+    _route(_task_defs.run_qa_video_check,        "video"),
+])
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 

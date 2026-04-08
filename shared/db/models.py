@@ -19,7 +19,6 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import (
-    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -33,7 +32,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -121,6 +120,7 @@ class TimestampMixin:
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+        index=True,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -319,8 +319,8 @@ class PlatformUpload(TimestampMixin, Base):
     # ── Polish SEO metadata (FRONTEND LOCALIZATION) ────────────────────────
     title_pl:       Mapped[str | None]  = mapped_column(Text)   # Viral-optimised Polish title
     description_pl: Mapped[str | None]  = mapped_column(Text)   # Polish SEO description
-    tags_pl:        Mapped[Any | None]  = mapped_column(JSON)   # list[str] — Polish hashtags
-    chapters_pl:    Mapped[Any | None]  = mapped_column(JSON)   # list[{"time": "00:00", "title": "..."}]
+    tags_pl:        Mapped[Any | None]  = mapped_column(JSONB)  # list[str] — Polish hashtags
+    chapters_pl:    Mapped[Any | None]  = mapped_column(JSONB)  # list[{"time": "00:00", "title": "..."}]
 
     platform_video_id:    Mapped[str | None]      = mapped_column(String(255))
     platform_video_url:   Mapped[str | None]      = mapped_column(Text)
