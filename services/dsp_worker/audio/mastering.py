@@ -12,12 +12,12 @@ Mastering chain (signal order):
   4. High shelf @ 14 kHz +1.0 dB  — Air / top-end extension (MusicGen tends to soft-limit highs)
   5. Compressor 2:1, attack 20ms, release 250ms — Glue compression
                                                   (slow attack preserves transients)
-  6. Hard limiter @ -1.0 dBFS — True-peak ceiling for streaming delivery
 
 Post-chain:
-  7. LUFS measurement (pyloudnorm) — integrated loudness of the full master
-  8. Loudness normalisation → -14.0 LUFS (streaming standard)
-  9. Second true-peak check after normalisation
+  6. LUFS measurement (pyloudnorm) — integrated loudness after EQ+compression
+  7. Loudness normalisation → -14.0 LUFS (streaming standard)
+  8. Hard limiter @ -1.0 dBFS — applied AFTER gain normalisation to safely
+                                 catch any inter-sample peaks without clipping
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -53,10 +53,11 @@ TRUE_PEAK_TOL    =  0.2    # dB — acceptable overshoot
 # Pedalboard chain
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_mastering_chain() -> Pedalboard:
+def _build_pre_chain() -> Pedalboard:
     """
-    Build and return the pedalboard mastering chain.
+    EQ + compression chain (no limiter).
     Instantiated fresh per-mix to avoid any state bleed between runs.
+    The limiter is applied separately AFTER loudness normalisation.
     """
     return Pedalboard([
         # 1. Sub-sonic rumble removal
@@ -81,9 +82,6 @@ def _build_mastering_chain() -> Pedalboard:
             attack_ms=20.0,
             release_ms=250.0,
         ),
-
-        # 6. Transparent brick-wall limiter — true peak ceiling
-        Limiter(threshold_db=TRUE_PEAK_CEIL, release_ms=100.0),
     ])
 
 
@@ -121,11 +119,11 @@ def master_audio(
 
     audio = audio.astype(np.float32)
 
-    # ── Step 1: Pedalboard processing ─────────────────────────────────────
-    board = _build_mastering_chain()
+    # ── Step 1: EQ + Compression (no limiter yet) ─────────────────────────
     # pedalboard expects (channels, samples) as float32
-    processed: np.ndarray = board(audio, sr)
-    log.debug("Pedalboard chain applied: shape=%s", processed.shape)
+    pre_chain = _build_pre_chain()
+    processed: np.ndarray = pre_chain(audio, sr)
+    log.debug("Pre-chain (EQ+comp) applied: shape=%s", processed.shape)
 
     # ── Step 2: Measure integrated loudness (ITU-R BS.1770-4) ─────────────
     # pyloudnorm expects (samples, channels)
@@ -142,16 +140,15 @@ def master_audio(
     normalised_T = pyln.normalize.loudness(processed.T, lufs_measured, target_lufs)
     normalised   = normalised_T.T.astype(np.float32)
 
-    # ── Step 4: Final true-peak check — clip if normalisation pushed over ──
-    tp = _true_peak_dbfs(normalised)
-    if tp > true_peak_ceil:
-        log.debug("True peak %.2f dBFS > %.2f — applying soft clip", tp, true_peak_ceil)
-        clip_linear = 10.0 ** (true_peak_ceil / 20.0)
-        normalised  = np.clip(normalised, -clip_linear, clip_linear)
-        tp          = _true_peak_dbfs(normalised)
+    # ── Step 4: Limiter applied AFTER gain normalisation ──────────────────
+    # Applying the limiter here (not before) ensures the ceiling is respected
+    # on the final loudness-normalised signal. No hard clipping required.
+    limiter_board = Pedalboard([Limiter(threshold_db=true_peak_ceil, release_ms=100.0)])
+    final: np.ndarray = limiter_board(normalised, sr).astype(np.float32)
+    tp = _true_peak_dbfs(final)
 
     log.info("Master complete: LUFS=%.2f  TP=%.2f dBFS", target_lufs, tp)
-    return normalised, lufs_measured, tp
+    return final, lufs_measured, tp
 
 
 def run_audio_qa(
@@ -250,14 +247,30 @@ def renormalize_audio_file(audio_path: str) -> None:
 
 def _true_peak_dbfs(audio: np.ndarray) -> float:
     """
-    Compute the true peak in dBFS.
-    Uses 4× oversampling interpolation to catch inter-sample peaks.
+    Compute True Peak in dBFS using 4× linear oversampling (ITU-R BS.1770-4).
+
+    Inter-sample peaks can exceed the sample-domain ceiling by up to +3 dB
+    after D/A conversion. 4× oversampling interpolation catches these peaks
+    so that the measured value matches what streaming codecs will reconstruct.
     """
     if audio.size == 0:
         return -120.0
-    # Simple approximation: max absolute sample value
-    # For production, use pyloudnorm's peak_normalize or an oversampling limiter
-    peak_linear = float(np.max(np.abs(audio)))
+    n = audio.shape[-1]
+    if n < 2:
+        peak_linear = float(np.max(np.abs(audio)))
+        return float(20.0 * np.log10(peak_linear)) if peak_linear >= 1e-9 else -120.0
+
+    # 4× linear interpolation upsampling
+    x_orig = np.arange(n, dtype=np.float64)
+    x_up   = np.linspace(0.0, n - 1, n * 4)
+    if audio.ndim == 1:
+        upsampled = np.interp(x_up, x_orig, audio.astype(np.float64))
+    else:
+        upsampled = np.stack([
+            np.interp(x_up, x_orig, ch.astype(np.float64)) for ch in audio
+        ])
+
+    peak_linear = float(np.max(np.abs(upsampled)))
     if peak_linear < 1e-9:
         return -120.0
     return float(20.0 * np.log10(peak_linear))

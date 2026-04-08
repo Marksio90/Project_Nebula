@@ -43,7 +43,7 @@ networks:
 # ---------------------------------------------------------------------------
 x-common-env: &common-env
   POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-  REDIS_URL: redis://redis:6379/0
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
   OPENAI_API_KEY: ${OPENAI_API_KEY}
   REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN}
   YOUTUBE_CLIENT_SECRETS_FILE: /secrets/youtube_client_secrets.json
@@ -123,11 +123,11 @@ services:
     volumes:
       - redis_data:/data
       - ./config/redis.conf:/usr/local/etc/redis/redis.conf:ro
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -245,10 +245,11 @@ services:
       <<: *common-env
       CELERY_QUEUES: dsp
       CELERY_CONCURRENCY: ${DSP_CONCURRENCY:-2}
-      # librosa / numpy thread control (avoid CPU over-subscription)
-      OMP_NUM_THREADS: "4"
-      OPENBLAS_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "4"
+      # librosa / numpy thread control — formula: CPU_LIMIT / CONCURRENCY
+      # Default: 4 CPUs / 2 workers = 2 threads each (avoids context-switch thrash)
+      OMP_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
     depends_on:
       db_migrate:
         condition: service_completed_successfully
@@ -323,7 +324,7 @@ services:
     ports:
       - "127.0.0.1:5555:5555"
     environment:
-      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       FLOWER_BASIC_AUTH: ${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-nebula}
       FLOWER_PERSISTENT: "True"
       FLOWER_DB: /data/flower.db

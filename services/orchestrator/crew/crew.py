@@ -58,12 +58,15 @@ def _get_precise_llm() -> LLM:
     Structured-output LLM for CSO strategy and QA agents.
     Model controlled by LLM_PRECISE_MODEL env var (default: gpt-4o-mini).
     Low temperature — tasks are pure JSON logic, no creative writing needed.
+    response_format enforces JSON at the API level, preventing the model from
+    wrapping output in markdown fences or prose regardless of prompt wording.
     """
     return LLM(
         model=settings.llm_precise_model,
         api_key=settings.openai_api_key,
         temperature=0.2,
         max_tokens=16_384,
+        response_format={"type": "json_object"},
     )
 
 

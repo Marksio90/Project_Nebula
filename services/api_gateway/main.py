@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Query, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -274,12 +275,14 @@ async def generate_mix(request: GenerateMixRequest) -> GenerateMixResponse:
     mix_id = uuid4()
     from shared.tasks.definitions import orchestrate_mix_pipeline
 
-    task = orchestrate_mix_pipeline.apply_async(
-        kwargs={
-            "mix_id": str(mix_id),
-            "genre": request.genre,
-        },
-        queue="orchestration",
+    task = await run_in_threadpool(
+        lambda: orchestrate_mix_pipeline.apply_async(
+            kwargs={
+                "mix_id": str(mix_id),
+                "genre": request.genre,
+            },
+            queue="orchestration",
+        )
     )
     log.info("Mix pipeline enqueued: mix_id=%s task_id=%s", mix_id, task.id)
     return GenerateMixResponse(
@@ -307,7 +310,9 @@ async def get_mix_status(mix_id: UUID) -> MixStatusResponse:
     # Enrich with live Celery task state when available
     celery_state: str | None = None
     if mix.celery_task_id:
-        celery_state = celery_app.AsyncResult(mix.celery_task_id).state
+        celery_state = await run_in_threadpool(
+            lambda: celery_app.AsyncResult(mix.celery_task_id).state
+        )
 
     return MixStatusResponse(
         mix_id=mix_id,
