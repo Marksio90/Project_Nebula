@@ -388,9 +388,14 @@ def _validate_audio_prompts(
         if p.get("position") is not None and str(p.get("prompt_en", "")).strip()
     ]
     if len(valid_raw) < len(prompts_raw):
+        # Always dump first entry at WARNING so we can diagnose key name issues
+        # without needing LOG_LEVEL=DEBUG
+        first = prompts_raw[0] if prompts_raw else {}
         log.warning(
-            "Stripped %d null/empty entries from %s (kept %d/%d)",
+            "Stripped %d null/empty entries from %s (kept %d/%d) — "
+            "first entry keys/values: %s",
             len(prompts_raw) - len(valid_raw), tag, len(valid_raw), len(prompts_raw),
+            str({k: (str(v)[:80] if isinstance(v, str) else v) for k, v in first.items()})[:500],
         )
     prompts_raw = valid_raw
 
